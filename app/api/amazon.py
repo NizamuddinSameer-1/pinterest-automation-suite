@@ -22,6 +22,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.database import get_db
 from app.models.models import Product
+from app.pipeline.product_taxonomy import classify_product, get_class_must_not_invent
+from app.pipeline.visual_specs import derive_must_preserve
+from app.schemas.amazon import AmazonItem
 from app.services.affiliate_router import build_smart_redirect_url, clean_style_keywords
 from app.services.amazon_paapi import extract_asin, paapi_client
 from app.services.product_dedup import compute_dedup_key, find_existing
@@ -142,21 +145,46 @@ async def ingest_amazon_product(
     if not item:
         raise HTTPException(status_code=404, detail=f"Could not fetch product details for ASIN: {asin}")
 
-    # 1. Download product image locally
+    # Validate scraped item structure strictly with Pydantic
+    try:
+        validated_item = AmazonItem.model_validate(item)
+        item = validated_item.model_dump()
+    except Exception as e:
+        logger.error("Scraped item validation failed for ASIN %s: %s", asin, e)
+        raise HTTPException(
+            status_code=422,
+            detail=f"Amazon item failed validation (incomplete product data): {e}",
+        )
+
+    # 1. Download gallery images locally (up to 6 high-resolution angles)
     image_rel_path = None
-    if item.get("primary_image_url"):
-        try:
-            products_dir = settings.products_path
-            products_dir.mkdir(parents=True, exist_ok=True)
-            img_filename = f"{asin}.jpg"
-            img_dest = products_dir / img_filename
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                res = await client.get(item["primary_image_url"])
-                if res.status_code == 200:
+    gallery_paths: list[str] = []
+    products_dir = settings.products_path
+    products_dir.mkdir(parents=True, exist_ok=True)
+
+    images_to_download = item.get("images") or []
+    if not images_to_download and item.get("primary_image_url"):
+        images_to_download = [item["primary_image_url"]]
+
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        for idx, img_url in enumerate(images_to_download[:6]):
+            try:
+                img_filename = f"{asin}.jpg" if idx == 0 else f"{asin}_{idx}.jpg"
+                img_dest = products_dir / img_filename
+                res = await client.get(img_url)
+                if res.status_code == 200 and len(res.content) > 1000:
                     img_dest.write_bytes(res.content)
-                    image_rel_path = str(img_dest)
-        except Exception as e:
-            logger.warning("Failed to download image for %s: %s", asin, e)
+                    path_str = str(img_dest)
+                    gallery_paths.append(path_str)
+                    if idx == 0:
+                        image_rel_path = path_str
+            except Exception as e:
+                logger.warning("Failed downloading gallery image %d for %s: %s", idx, asin, e)
+
+    if not image_rel_path and gallery_paths:
+        image_rel_path = gallery_paths[0]
+
+    product_images_json = json.dumps(gallery_paths) if gallery_paths else None
 
     # 2. Build Universal Smart Link (/api/go) with asin_in support
     asin_in = body.asin_in or item.get("asin_in")
@@ -182,15 +210,26 @@ async def ingest_amazon_product(
     currency = item.get("currency") or "USD"
     is_prime = bool(item.get("is_prime", False))
 
-    must_preserve = item.get("must_preserve") or []
-    if not must_preserve:
-        must_preserve = [item["title"][:120], "Original physical silhouette and authentic textures"]
+    # 5. Class-specific negative physical constraints via taxonomy
+    classification = classify_product(
+        {"name": item["title"], "category": category, "materials": item.get("materials", [])}
+    )
+    must_not_invent = item.get("must_not_invent") or get_class_must_not_invent(classification)
 
-    must_not_invent = item.get("must_not_invent") or [
-        "Do not add logos, graphics, or branding not on the original product",
-        "Do not alter the garment neckline, sleeve length, or pocket placement",
-        "Do not invent extra zippers, hoods, or non-existent hardware",
-    ]
+    # 6. Physical facts must_preserve derivation
+    selected_color = item.get("selected_color")
+    must_preserve = item.get("must_preserve") or derive_must_preserve(
+        overview=item.get("product_overview"),
+        specs=item.get("technical_specs"),
+        materials=item.get("materials"),
+        about_this_item=item.get("about_this_item"),
+        selected_color=selected_color,
+        title=item["title"],
+    )
+
+    # Variation colors aligned to selected color
+    colors_list = [selected_color] if selected_color else item.get("variation_colors", [])
+    colors_json = json.dumps(colors_list) if colors_list else None
 
     product_truth = {
         "asin": asin,
@@ -207,6 +246,12 @@ async def ingest_amazon_product(
         "is_prime": is_prime,
         "style_query": style_query,
         "category": category,
+        "images": item.get("images", []),
+        "product_images": gallery_paths,
+        "selected_color": selected_color,
+        "variation_colors": item.get("variation_colors", []),
+        "selected_size": item.get("selected_size"),
+        "variation_sizes": item.get("variation_sizes", []),
         "features": item.get("features", []),
         "about_this_item": item.get("about_this_item", []),
         "product_overview": item.get("product_overview", {}),
@@ -225,7 +270,7 @@ async def ingest_amazon_product(
         "smart_affiliate_url": smart_url,
     }
 
-    # 5. ASIN Deduplication Check via central helper
+    # 7. ASIN Deduplication Check via central helper
     existing_product = await find_existing(
         db,
         asin=asin,
@@ -245,10 +290,13 @@ async def ingest_amazon_product(
         existing_product.price = price_amount
         existing_product.currency = currency
         existing_product.category = category
+        existing_product.colors = colors_json
         existing_product.materials = json.dumps(item.get("materials", []))
         existing_product.key_attributes = json.dumps(item.get("style_attributes", []))
         if image_rel_path:
             existing_product.product_image_path = image_rel_path
+        if product_images_json:
+            existing_product.product_images_json = product_images_json
         existing_product.product_truth_json = json.dumps(product_truth)
         existing_product.affiliate_url = smart_url
         existing_product.availability = "in_stock"
@@ -272,9 +320,11 @@ async def ingest_amazon_product(
             price=price_amount,
             currency=currency,
             category=category,
+            colors=colors_json,
             materials=json.dumps(item.get("materials", [])),
             key_attributes=json.dumps(item.get("style_attributes", [])),
             product_image_path=image_rel_path,
+            product_images_json=product_images_json,
             product_truth_json=json.dumps(product_truth),
             availability="in_stock",
         )

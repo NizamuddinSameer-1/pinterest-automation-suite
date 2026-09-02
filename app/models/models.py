@@ -119,6 +119,7 @@ class Product(Base):
     materials: Mapped[str | None] = mapped_column(Text)  # JSON array
     key_attributes: Mapped[str | None] = mapped_column(Text)  # JSON array
     product_image_path: Mapped[str | None] = mapped_column(String(512))
+    product_images_json: Mapped[str | None] = mapped_column(Text)  # JSON array of gallery image paths
     product_truth_json: Mapped[str | None] = mapped_column(Text)  # ProductTruth JSON
     availability: Mapped[str] = mapped_column(String(32), default="in_stock")
     last_verified: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

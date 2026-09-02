@@ -606,7 +606,7 @@ KITCHEN = _add(ProductClass(
     keywords=("pan", "pot", "skillet", "knife", "cutting board", "mug", "cup", "glass",
               "plate", "bowl", "kettle", "blender", "airfryer", "air fryer", "utensil",
               "kitchen", "cookware", "tumbler", "water bottle", "food container",
-              "coffee maker", "espresso"),
+              "coffee maker", "espresso", "dutch oven", "saucepan", "casserole", "wok", "toaster"),
 ))
 
 FOOD = _add(ProductClass(
@@ -1088,6 +1088,101 @@ def director_brief(
         )
 
     return "\n\n".join(lines)
+
+
+# ── Class-Specific Product Truth Negative Constraints ───────────────────
+
+CLASS_MUST_NOT_INVENT: dict[str, tuple[str, ...]] = {
+    "kitchen": (
+        "Do not invent extra handles, non-existent lids, pouring spouts, or fictional logos",
+        "Do not alter the cookware or kitchenware material, finish, or geometric profile",
+        "Do not change the stated enamel color, stainless steel grade, or non-stick surface",
+    ),
+    "tech": (
+        "Do not invent extra ports, buttons, LED lights, dials, or fictional logos",
+        "Do not alter the device enclosure material, metallic colorway, or form factor",
+        "Do not add fictional screens, antennas, or speculative accessories",
+    ),
+    "skincare": (
+        "Do not alter the bottle shape, pump mechanism, dropper, or cap closure",
+        "Do not invent fictional brand names, logos, or pseudo-scientific claims on packaging",
+        "Do not change the stated product texture, translucency, or fluid viscosity",
+    ),
+    "makeup": (
+        "Do not alter the compact shape, pan layout, applicator wand, or casing finish",
+        "Do not invent fictional branding or alter the stated shade colorway",
+        "Do not depict unrealistic cakey CGI finishes; preserve authentic pigment texture",
+    ),
+    "fragrance": (
+        "Do not alter the perfume flacon geometry, atomizer collar, cap, or glass tint",
+        "Do not invent extra embellishments, ribbons, or fictional typography on the bottle",
+    ),
+    "jewelry": (
+        "Do not alter the gemstone cut, prong setting, metal karat/finish, or clasp type",
+        "Do not invent extra stones, charms, engravings, or speculative chains",
+    ),
+    "footwear": (
+        "Do not alter the sole thickness, tread pattern, eyelet count, or heel height",
+        "Do not invent extra straps, buckles, non-existent logos, or change colorway blocks",
+    ),
+    "bags": (
+        "Do not alter the strap drop length, hardware finish, buckle type, or pocket count",
+        "Do not invent non-existent zippers, monogram prints, or fictional logos",
+    ),
+    "apparel": (
+        "Do not alter garment neckline, sleeve length, hemline, or pocket placement",
+        "Do not invent extra zippers, hoods, belts, straps, or non-existent hardware",
+        "Do not change the stated textile composition, knit gauge, or authentic pattern",
+    ),
+    "costume": (
+        "Do not invent extra accessories, frills, or fictional branding",
+        "Do not alter the costume silhouette, trim, or stated material components",
+    ),
+    "home_decor": (
+        "Do not alter the object dimensions, material finish, ceramic glaze, or surface pattern",
+        "Do not invent extra legs, pedestals, or fictional decorative motifs",
+    ),
+    "bedding": (
+        "Do not alter the weave texture, thread count appearance, hem finish, or pattern scale",
+        "Do not invent extra ruffles, embroidery, or buttons not on the product",
+    ),
+    "toys": (
+        "Do not alter the character anatomy, articulation points, molded seams, or safety features",
+        "Do not invent non-existent paint apps, decals, or speculative accessories",
+    ),
+    "fitness": (
+        "Do not alter the grip knurling, resistance markings, strap buckles, or structural seams",
+        "Do not invent extra digital displays, sensors, or non-existent branding",
+    ),
+    "food": (
+        "Do not alter the food portion, garnish, natural baked crust, or authentic color",
+        "Do not depict synthetic plastic-sheen artificial food styling",
+    ),
+}
+
+GENERIC_MUST_NOT_INVENT: tuple[str, ...] = (
+    "Do not add logos, graphics, or branding not on the original product",
+    "Do not invent extra parts, accessories, or fictional physical features",
+    "Do not alter the product's authentic colorway, silhouette, or material composition",
+)
+
+
+def get_class_must_not_invent(klass: ProductClass | Classification | str | None) -> list[str]:
+    """
+    Get tailored must_not_invent constraints for this specific product class.
+    Prevents apparel constraints ("neckline, sleeve length") from being applied to kitchenware/tech.
+    """
+    if hasattr(klass, "key"):
+        key = klass.key
+    elif hasattr(klass, "product_class"):
+        key = klass.product_class.key
+    else:
+        key = str(klass or "").strip().lower()
+    key = str(key).strip().lower()
+    constraints = CLASS_MUST_NOT_INVENT.get(key)
+    if constraints:
+        return list(constraints)
+    return list(GENERIC_MUST_NOT_INVENT)
 
 
 

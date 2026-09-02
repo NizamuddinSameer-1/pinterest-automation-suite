@@ -55,6 +55,9 @@ def _require_bs4() -> None:
         )
 
 from app.config import settings
+from app.pipeline.product_taxonomy import classify_product, get_class_must_not_invent
+from app.pipeline.visual_specs import derive_must_preserve
+from app.schemas.amazon import AmazonItem
 
 logger = logging.getLogger("pre.amazon_paapi")
 
@@ -380,6 +383,8 @@ class AmazonProductEngine:
     def __init__(self) -> None:
         self.cache_dir = Path(settings.storage_path) / "cache" / "paapi"
         self.cache_dir.mkdir(parents=True, exist_ok=True)
+        self.html_cache_dir = Path("data/amazon_cache")
+        self.html_cache_dir.mkdir(parents=True, exist_ok=True)
         # One client for the process, so the cookies Amazon hands out on the first
         # request travel with every later one. A fresh client per request is what
         # made `/s?k=…` look like "0 results".
@@ -440,6 +445,46 @@ class AmazonProductEngine:
 
         return last
 
+    async def _fetch_with_playwright(self, url: str, asin: str) -> str | None:
+        """
+        Fallback browser fetcher using persistent Amazon profile.
+        Bypasses bot/captcha walls when simple HTTP requests get an empty shell.
+        """
+        try:
+            from playwright.async_api import async_playwright
+        except ImportError:
+            logger.warning("Playwright is not installed; cannot run browser fallback for %s", asin)
+            return None
+
+        profile_dir = Path("data/amazon_profile").resolve()
+        profile_dir.mkdir(parents=True, exist_ok=True)
+        logger.info("Fetching %s via Playwright persistent profile: %s", url, profile_dir)
+
+        try:
+            async with async_playwright() as p:
+                context = await p.chromium.launch_persistent_context(
+                    user_data_dir=str(profile_dir),
+                    headless=True,
+                    args=[
+                        "--disable-blink-features=AutomationControlled",
+                        "--no-sandbox",
+                        "--disable-dev-shm-usage",
+                    ],
+                    viewport={"width": 1440, "height": 900},
+                    user_agent=DEFAULT_HEADERS["User-Agent"],
+                )
+                page = context.pages[0] if context.pages else await context.new_page()
+                try:
+                    await page.goto(url, wait_until="domcontentloaded", timeout=25000)
+                    await asyncio.sleep(2.0)
+                    html = await page.content()
+                    return html
+                finally:
+                    await context.close()
+        except Exception as e:
+            logger.error("Playwright browser fallback failed for %s: %s", asin, e)
+            return None
+
     async def aclose(self) -> None:
         """Close the shared client (for tests and shutdown hooks)."""
         if self._client is not None and not self._client.is_closed:
@@ -477,31 +522,71 @@ class AmazonProductEngine:
     # ── Live Page Scraper Engine ──────────────────────────────────
 
     async def _fetch_from_scraper(self, asin: str, country: str = "US") -> dict[str, Any] | None:
-        """Read every product fact off the live Amazon product page."""
+        """Read every product fact off the live Amazon product page, with persistent cache and browser fallback."""
         _require_bs4()
         domain = "amazon.in" if country.upper() == "IN" else "amazon.com"
         url = f"https://www.{domain}/dp/{asin}"
 
-        try:
+        raw_html: str | None = None
+        html_cache_path = self.html_cache_dir / f"{asin}.html"
+
+        # 1. Check local raw HTML cache first
+        if html_cache_path.exists():
+            try:
+                cached_text = html_cache_path.read_text(encoding="utf-8")
+                if "#productTitle" in cached_text or 'id="productTitle"' in cached_text:
+                    raw_html = cached_text
+                    logger.info("Using cached raw HTML for ASIN %s (%d bytes)", asin, len(raw_html))
+            except Exception as e:
+                logger.warning("Cache read failed for raw HTML %s: %s", asin, e)
+
+        # 2. Fetch over HTTP if not cached
+        if not raw_html:
             res = await self._get_page(url, domain)
-            if res is None:
-                return None
-            if res.status_code != 200:
-                logger.warning("Scraper HTTP status %d for %s", res.status_code, url)
-                return None
+            if res is not None and res.status_code == 200 and len(res.text) >= _MIN_REAL_PAGE_BYTES:
+                raw_html = res.text
+            else:
+                bytes_received = len(res.text) if res else 0
+                logger.warning(
+                    "Amazon HTTP fetch returned bot shell (%d bytes) for %s; invoking Playwright persistent profile",
+                    bytes_received, asin,
+                )
+                raw_html = await self._fetch_with_playwright(url, asin)
 
-            soup = BeautifulSoup(res.text, "html.parser")
+            # Persist successful raw HTML
+            if raw_html:
+                try:
+                    html_cache_path.write_text(raw_html, encoding="utf-8")
+                except Exception as e:
+                    logger.warning("Failed saving raw HTML cache for %s: %s", asin, e)
 
-            # 1. Title. Its absence means a bot wall or a dead listing — not
-            #    a product named "Product B0XXXXXXXX". Refuse instead.
+        if not raw_html:
+            logger.error("All fetch attempts failed for ASIN %s (%s)", asin, url)
+            return None
+
+        try:
+            soup = BeautifulSoup(raw_html, "html.parser")
+
+            # 3. Product Title check
             title = _clean_text(soup.select_one("#productTitle") or soup.select_one("h1 span"))
             if not title:
-                logger.warning(
-                    "No #productTitle for %s (bot check or removed listing); nothing extracted", asin
-                )
+                # If cached HTML was a bot shell that slipped through, attempt Playwright once
+                logger.warning("No #productTitle in HTML for %s; attempting Playwright fallback", asin)
+                playwright_html = await self._fetch_with_playwright(url, asin)
+                if playwright_html:
+                    raw_html = playwright_html
+                    soup = BeautifulSoup(raw_html, "html.parser")
+                    title = _clean_text(soup.select_one("#productTitle") or soup.select_one("h1 span"))
+                    try:
+                        html_cache_path.write_text(raw_html, encoding="utf-8")
+                    except Exception:
+                        pass
+
+            if not title:
+                logger.warning("No #productTitle for %s (bot check or removed listing); nothing extracted", asin)
                 return None
 
-            # 2. Brand — None when the byline is missing, never a placeholder.
+            # 4. Brand
             brand_raw = _clean_text(
                 soup.select_one("#bylineInfo") or soup.select_one(".po-brand .a-span9")
             )
@@ -510,9 +595,7 @@ class AmazonProductEngine:
                 or None
             )
 
-            # 3. Price — currency comes from the page's own symbol. The
-            #    buybox is checked before the wider column so a struck-out
-            #    or "other sellers" price can't win.
+            # 5. Price
             price_str: str | None = None
             price_amount: float | None = None
             currency: str | None = None
@@ -533,19 +616,9 @@ class AmazonProductEngine:
                     if price_amount is not None:
                         break
 
-            # Amazon removes the buybox entirely for listings it will not ship to
-            # the requester's location, so an empty price is usually explainable.
-            # Recording the reason keeps "no price" from looking like a parser bug.
             availability = _clean_text(soup.select_one("#availability"))
-            if price_amount is None:
-                logger.info(
-                    "No parseable price for %s on %s (availability: %s); left empty",
-                    asin,
-                    domain,
-                    availability or "not stated",
-                )
 
-            # 4. Ratings & Review Count — no fake fallbacks
+            # 6. Ratings & Reviews
             star_elem = soup.select_one("#acrPopover") or soup.select_one(".a-icon-star span")
             star_rating = None
             if star_elem:
@@ -566,9 +639,10 @@ class AmazonProductEngine:
                     except ValueError:
                         pass
 
-            # 5. Primary Image & Gallery
+            # 7. Full Gallery Extraction (#landingImage, #altImages, and colorImages JSON)
             primary_image = ""
             images: list[str] = []
+
             main_img = soup.select_one("#landingImage") or soup.select_one("#imgBlkFront")
             if main_img:
                 primary_image = main_img.get("data-old-hires") or main_img.get("src", "")
@@ -576,14 +650,79 @@ class AmazonProductEngine:
                 if dyn_data:
                     try:
                         dyn_json = json.loads(dyn_data)
-                        images = list(dyn_json.keys())
+                        for k in dyn_json.keys():
+                            if k.startswith("http") and k not in images:
+                                images.append(k)
                     except Exception:
                         pass
 
+            # Alt images gallery
+            for li in soup.select("#altImages ul li"):
+                img = li.select_one("img")
+                if not img:
+                    continue
+                src = img.get("src") or ""
+                if "._" in src and ".jpg" in src:
+                    hires = re.sub(r"\._[A-Z0-9_,]+_\.", "._AC_SL1500_.", src)
+                    if hires.startswith("http") and hires not in images:
+                        images.append(hires)
+
+            # Embedded colorImages / imageBlock JSON from scripts
+            for script in soup.select("script"):
+                stext = script.string or script.text or ""
+                if "colorImages" in stext or "colorToAsin" in stext or "imageBlock" in stext:
+                    hires_matches = re.findall(r'["\']hiRes["\']\s*:\s*["\'](https://[^"\']+)["\']', stext)
+                    for h in hires_matches:
+                        if h.startswith("http") and h not in images:
+                            images.append(h)
+                    large_matches = re.findall(r'["\']large["\']\s*:\s*["\'](https://[^"\']+)["\']', stext)
+                    for l in large_matches:
+                        if l.startswith("http") and l not in images:
+                            images.append(l)
+
             if not primary_image and images:
                 primary_image = images[0]
+            elif primary_image and primary_image not in images:
+                images.insert(0, primary_image)
 
-            # 6. About this item / Bullets
+            # 8. Twister Variations (Color and Size)
+            selected_color = _clean_text(
+                soup.select_one(
+                    "#variation_color_name .selection, "
+                    "#inline-twister-row-color_name .selection, "
+                    "#variation_color_name span.selection"
+                )
+            ) or None
+
+            variation_colors: list[str] = []
+            for li in soup.select("#variation_color_name li, #inline-twister-row-color_name li"):
+                c_img = li.select_one("img")
+                c_name = c_img.get("alt") if c_img else None
+                if not c_name:
+                    c_name = _clean_text(li)
+                if c_name and len(c_name) < 40 and c_name not in variation_colors:
+                    variation_colors.append(c_name)
+
+            selected_size = _clean_text(
+                soup.select_one(
+                    "#variation_size_name .selection, "
+                    "#dropdown_selected_size_name .a-dropdown-prompt, "
+                    "#variation_size_name span.selection"
+                )
+            ) or None
+
+            variation_sizes: list[str] = []
+            for item_node in soup.select("#variation_size_name li, #native_dropdown_selected_size_name option"):
+                s_name = _clean_text(item_node)
+                if (
+                    s_name
+                    and not s_name.lower().startswith("select")
+                    and len(s_name) < 30
+                    and s_name not in variation_sizes
+                ):
+                    variation_sizes.append(s_name)
+
+            # 9. About this item / Bullets
             about_this_item: list[str] = []
             bullet_selectors = [
                 "#feature-bullets ul li span.a-list-item",
@@ -600,19 +739,17 @@ class AmazonProductEngine:
                         if txt not in about_this_item:
                             about_this_item.append(txt)
 
-            # 7. Product Overview & Style (Fabric type, Closure, Care, Fit\u2026)
+            # 10. Product Overview & Technical Specs
             overview = _product_overview(soup)
-
-            # 8. Item Specs & Measurements, listing metadata filtered out
             tech_specs = _technical_specs(soup)
 
-            # 9. Product Description
-            desc_elem = soup.select_one("div[data-feature-name='productDescription'] p, #productDescription p, #productDescription")
+            # 11. Description
+            desc_elem = soup.select_one(
+                "div[data-feature-name='productDescription'] p, #productDescription p, #productDescription"
+            )
             product_desc = _clean_text(desc_elem)
 
-            # 10. Materials registry & style attributes.
-            #     The spec row wins over keyword sniffing: "97% Polyester,
-            #     3% Elastane" is a fact, "Polyester" is a guess at it.
+            # 12. Materials registry
             combined_text = f"{title} {' '.join(about_this_item)} {' '.join(overview.values())} {product_desc}".lower()
             materials = [m.capitalize() for m in _MATERIAL_WORDS if re.search(r"\b" + m + r"\b", combined_text)]
             for key in ("Material composition", "Fabric type", "Material", "Outer material", "Material type"):
@@ -633,36 +770,26 @@ class AmazonProductEngine:
                 if fact not in styles:
                     styles.append(fact)
 
-            # 11. must_preserve \u2014 the physical facts a render must keep.
-            #     Built from whichever spec keys the page actually carries,
-            #     so a layout change degrades this list instead of emptying
-            #     it (the old version hardcoded four apparel-only keys).
-            must_preserve: list[str] = []
-            if materials:
-                must_preserve.append(f"Fabric and material composition: {', '.join(materials[:3])}")
-            must_preserve.extend(spec_facts[:5])
+            # 13. must_preserve via shared visual_specs derivation
+            must_preserve = derive_must_preserve(
+                overview=overview,
+                specs=tech_specs,
+                materials=materials,
+                about_this_item=about_this_item,
+                selected_color=selected_color,
+                title=title,
+            )
 
-            for bullet in about_this_item[:4]:
-                highlight = _bullet_highlight(bullet)
-                if highlight and highlight not in must_preserve:
-                    must_preserve.append(highlight)
-
-            if not must_preserve:
-                must_preserve = [
-                    title[:100],
-                    "Original silhouette, construction and tactile texture of the product",
-                ]
-
-            must_not_invent = [
-                "Do not add logos, graphics, or branding not on the original product",
-                "Do not alter the product's neckline, sleeve length, or pocket placement",
-                "Do not invent extra zippers, hoods, straps or hardware",
-                "Do not change the stated material composition or colour",
-            ]
+            # 14. Class-specific negative constraints
+            dept = overview.get("Department") or overview.get("department") or ""
+            classification = classify_product(
+                {"name": title, "category": dept, "materials": materials}
+            )
+            must_not_invent = get_class_must_not_invent(classification)
 
             prime_badge = soup.select_one("#primeSupportingText, .a-icon-prime, #isPrimeBadge")
 
-            return {
+            parsed_data = {
                 "asin": asin,
                 "title": title,
                 "brand": brand,
@@ -675,7 +802,7 @@ class AmazonProductEngine:
                 "review_count": review_count,
                 "is_prime": prime_badge is not None,
                 "primary_image_url": primary_image,
-                "images": images[:6] if images else ([primary_image] if primary_image else []),
+                "images": images[:8] if images else ([primary_image] if primary_image else []),
                 "features": about_this_item[:8],
                 "about_this_item": about_this_item[:8],
                 "product_overview": overview,
@@ -685,13 +812,22 @@ class AmazonProductEngine:
                 "style_attributes": styles[:10],
                 "must_preserve": must_preserve[:8],
                 "must_not_invent": must_not_invent,
+                "selected_color": selected_color,
+                "variation_colors": variation_colors[:16],
+                "selected_size": selected_size,
+                "variation_sizes": variation_sizes[:16],
                 "source": "page_scrape",
                 "marketplace": domain,
                 "verified_date": datetime.datetime.now(datetime.timezone.utc).strftime("%b %d, %Y"),
             }
+
+            # 15. Strict validation with Pydantic model
+            validated = AmazonItem.model_validate(parsed_data)
+            return validated.model_dump()
+
         except Exception as e:
             logger.error("Scraper failed for ASIN %s: %s", asin, e)
-        return None
+            return None
 
     # ── Search ────────────────────────────────────────────────────
 

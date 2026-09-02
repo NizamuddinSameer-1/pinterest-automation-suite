@@ -91,97 +91,13 @@ class CompileWarning:
     message: str
 
 
-#: Listing rows that describe the object as a camera would see it. Ordered, because
-#: a spec sheet reads better as colour → fabric → cut → fittings than alphabetically.
-_VISUAL_SPEC_ORDER = (
-    "colour", "color", "fabric", "material", "composition", "print", "pattern",
-    "silhouette", "shape", "fit", "style", "cut", "neck", "collar", "sleeve",
-    "length", "waist", "rise", "hem", "lining", "closure", "strap", "buckle",
-    "toe", "heel", "sole", "finish", "trim", "embellish", "occasion", "season",
+from app.pipeline.visual_specs import (
+    extract_measurements as _measurements,
+    extract_visual_specs as _visual_specs,
+    normalize_fact as _normalize_fact,
 )
 
-#: Rows that are facts about the *listing*, not the object in front of the lens.
-#: "Care instructions: Machine Wash" cannot be photographed.
-_SKIP_SPEC_KEYS = (
-    "care instruction", "wash", "origin", "net quantity", "department", "warranty",
-    "country", "batteries", "asin", "best sellers", "customer review", "manufacturer",
-    "date first available", "item model number", "packer", "importer", "supplier",
-    "generic name", "included components", "unit count", "is discontinued",
-)
-
-#: Measurements are kept apart: they tell the model how big the thing is, which is
-#: a scale instruction rather than a look instruction.
-_MEASUREMENT_KEYS = ("dimension", "weight", "capacity", "volume", "diameter")
-
-#: A "spec" longer than this is a paragraph of marketing copy wearing a key.
-_MAX_SPEC_VALUE_CHARS = 90
 _MAX_SPECS_IN_PROMPT = 8
-
-
-def _normalize_fact(text: str) -> str:
-    """Lowercased, punctuation-light form used only to compare two facts."""
-    return re.sub(r"[^a-z0-9]+", " ", str(text).lower()).strip()
-
-
-def _spec_rank(key: str) -> int:
-    """Position in `_VISUAL_SPEC_ORDER`, or the end of the queue."""
-    low = key.lower()
-    for index, token in enumerate(_VISUAL_SPEC_ORDER):
-        if token in low:
-            return index
-    return len(_VISUAL_SPEC_ORDER)
-
-
-def _visual_specs(specs: Any) -> list[tuple[str, str]]:
-    """
-    The rows of an Amazon spec table that describe how the product looks.
-
-    Takes the `product_overview` / `technical_specs` dicts the Amazon engine
-    scrapes and drops everything a photograph cannot show, so the prompt gets
-    "Neck style: Scoop Neck" without "Net Quantity: 1 Count".
-    """
-    if not isinstance(specs, dict):
-        return []
-    rows: list[tuple[str, str]] = []
-    for raw_key, raw_value in specs.items():
-        key = str(raw_key).strip().rstrip(":")
-        value = str(raw_value).strip().rstrip(".")
-        if not key or not value or len(value) > _MAX_SPEC_VALUE_CHARS:
-            continue
-        low = key.lower()
-        if any(skip in low for skip in _SKIP_SPEC_KEYS):
-            continue
-        if any(m in low for m in _MEASUREMENT_KEYS):
-            continue
-        if _spec_rank(key) == len(_VISUAL_SPEC_ORDER):
-            continue
-        rows.append((key, value))
-    rows.sort(key=lambda row: _spec_rank(row[0]))
-    return rows
-
-
-def _measurements(specs: Any) -> list[str]:
-    """
-    Dimension and weight rows, phrased as `"31.8 x 25.9 x 1.4 cm"`.
-
-    Amazon states the weight twice — `Package Dimensions` ends with "; 299 g" and
-    `Item Weight` repeats it — so a row already contained in one that was kept is
-    dropped instead of producing "… 299 g, 299 g".
-    """
-    if not isinstance(specs, dict):
-        return []
-    out: list[str] = []
-    for raw_key, raw_value in specs.items():
-        low = str(raw_key).lower()
-        value = str(raw_value).strip().rstrip(".")
-        if not value or len(value) > _MAX_SPEC_VALUE_CHARS:
-            continue
-        if not any(m in low for m in _MEASUREMENT_KEYS):
-            continue
-        if any(value in kept or kept in value for kept in out):
-            continue
-        out.append(value)
-    return out[:2]
 
 
 def _spec_sheet_block(
