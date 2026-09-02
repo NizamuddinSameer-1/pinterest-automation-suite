@@ -70,6 +70,7 @@ async def search_amazon_products(body: AmazonSearchRequest) -> dict[str, Any]:
             search_index=body.category,
             item_count=body.item_count,
             sort_by=body.sort_by,
+            country=body.country,
         )
         # Attach preview smart link to each result
         for item in items:
@@ -80,11 +81,18 @@ async def search_amazon_products(body: AmazonSearchRequest) -> dict[str, Any]:
             )
             item["style_query"] = clean_style_keywords(item.get("title", ""))
 
+        msg = (
+            None
+            if items
+            else "No products found for this keyword. If Amazon is rate-limiting searches, you can paste the direct Amazon URL or ASIN in the 'Direct ASIN / Link' tab."
+        )
+
         return {
             "success": True,
             "count": len(items),
             "keywords": body.keywords,
             "items": items,
+            "message": msg,
         }
     except Exception as e:
         logger.error("Amazon search failed: %s", e)

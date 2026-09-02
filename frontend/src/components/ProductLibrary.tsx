@@ -91,7 +91,7 @@ export const ProductLibrary: React.FC<Props> = ({ setActiveTab, setSelectedProdu
       if (res.success && res.items && res.items.length > 0) {
         setItems(res.items);
       } else {
-        setError('No products found for this keyword. Try another search phrase.');
+        setError(res.message || 'No products found for this keyword. If Amazon is rate-limiting searches, you can paste the direct Amazon URL or ASIN in the "Direct ASIN / Link" tab.');
       }
     } catch (err: any) {
       setError(err.message || 'Failed to search Amazon products');

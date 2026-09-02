@@ -824,11 +824,11 @@ export const api = {
   },
 
   // ── Amazon Product Discovery & Ingestion ──────
-  searchAmazon: async (keywords: string, category: string = 'All', itemCount: number = 8): Promise<{ success: boolean; count: number; items: AmazonItem[] }> => {
+  searchAmazon: async (keywords: string, category: string = 'All', itemCount: number = 8, country: string = 'US'): Promise<{ success: boolean; count: number; items: AmazonItem[]; message?: string }> => {
     const res = await fetch(`${API_BASE}/amazon/search`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ keywords, category, item_count: itemCount }),
+      body: JSON.stringify({ keywords, category, item_count: itemCount, country }),
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: res.statusText }));

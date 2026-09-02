@@ -55,10 +55,10 @@ export const AmazonSearchModal: React.FC<AmazonSearchModalProps> = ({
     setLoading(true);
     try {
       const res = await api.searchAmazon(q, 'All', 8);
-      if (res.success && res.items) {
+      if (res.success && res.items && res.items.length > 0) {
         setItems(res.items);
       } else {
-        setError('No products found for this keyword. Try another search phrase.');
+        setError(res.message || 'No products found for this keyword. If Amazon is rate-limiting searches, you can paste the direct Amazon URL or ASIN.');
       }
     } catch (err: any) {
       setError(err.message || 'Failed to search Amazon products');

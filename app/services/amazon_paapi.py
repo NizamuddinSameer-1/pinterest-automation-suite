@@ -74,12 +74,12 @@ DEFAULT_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/124.0.0.0 Safari/537.36"
+        "Chrome/131.0.0.0 Safari/537.36"
     ),
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
     "Accept-Language": "en-US,en;q=0.9",
     "Accept-Encoding": "gzip, deflate, br",
-    "sec-ch-ua": '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+    "sec-ch-ua": '"Google Chrome";v="131", "Chromium";v="131", "Not_A Brand";v="24"',
     "sec-ch-ua-mobile": "?0",
     "sec-ch-ua-platform": '"Windows"',
     "Sec-Fetch-Dest": "document",
@@ -837,6 +837,7 @@ class AmazonProductEngine:
         count: int = 8,
         search_index: str = "All",
         sort_by: str = "Featured",
+        country: str = "US",
     ) -> list[dict[str, Any]]:
         """
         Search Amazon and parse the result cards.
@@ -854,29 +855,39 @@ class AmazonProductEngine:
         sort_param = _SEARCH_SORT_PARAM.get(sort_by.strip().lower())
         if sort_param:
             params["s"] = sort_param
-        url = "https://www.amazon.com/s?" + urllib.parse.urlencode(params)
+
+        host = "amazon.in" if country.upper() == "IN" else "amazon.com"
+        url = f"https://www.{host}/s?" + urllib.parse.urlencode(params)
         results: list[dict[str, Any]] = []
 
         try:
-            res = await self._get_page(url, "amazon.com")
-            if res is None or res.status_code != 200:
-                logger.warning(
-                    "Search HTTP status %s for %s",
-                    "no response" if res is None else res.status_code,
-                    url,
-                )
-                return []
+            res = await self._get_page(url, host)
+            soup = None
+            cards = []
 
-            soup = BeautifulSoup(res.text, "html.parser")
-            cards = soup.select('div[data-component-type="s-search-result"]')
+            if res is not None and res.status_code == 200 and len(res.text) >= _MIN_REAL_PAGE_BYTES:
+                soup = BeautifulSoup(res.text, "html.parser")
+                cards = soup.select('div[data-component-type="s-search-result"]')
+
             if not cards:
-                # A search page with no cards at all is Amazon's ~2 KB bot shell,
-                # not an empty result set. Say so instead of returning "0 found".
+                # A search page with no cards at all or <20KB is Amazon's bot shell / captcha.
+                # Fall back to Playwright persistent context to retrieve cards safely.
                 logger.warning(
-                    "No result cards for %r (page was %d bytes; likely a bot check)",
+                    "Search HTTP response lacked result cards for %r (%s, bytes: %d). Falling back to Playwright...",
                     keywords,
-                    len(res.text),
+                    host,
+                    len(res.text) if res and res.text else 0,
                 )
+                pw_html = await self._fetch_with_playwright(url, asin=keywords)
+                if pw_html:
+                    soup = BeautifulSoup(pw_html, "html.parser")
+                    cards = soup.select('div[data-component-type="s-search-result"]')
+                    if cards:
+                        logger.info("Playwright recovered %d search cards for %r", len(cards), keywords)
+
+            if not soup or not cards:
+                logger.warning("No search cards recovered for %r on %s", keywords, host)
+                return []
 
             for card in cards[:count]:
                 asin = card.get("data-asin", "").strip()
@@ -963,7 +974,7 @@ class AmazonProductEngine:
                     "price": price_str,
                     "price_amount": price_amt,
                     "currency": currency,
-                    "price_marketplace": "amazon.com" if price_amt is not None else None,
+                    "price_marketplace": host if price_amt is not None else None,
                     "star_rating": star_rating,
                     "review_count": rev_count,
                     "is_prime": card.select_one(".a-icon-prime, [aria-label*='Prime']") is not None,
@@ -971,7 +982,7 @@ class AmazonProductEngine:
                     "images": [img_url] if img_url else [],
                     "features": [],
                     "source": "search_scrape",
-                    "marketplace": "amazon.com",
+                    "marketplace": host,
                     "verified_date": datetime.datetime.now(datetime.timezone.utc).strftime("%b %d, %Y"),
                 })
         except Exception as e:
@@ -1027,19 +1038,23 @@ class AmazonProductEngine:
         search_index: str = "All",
         item_count: int = 10,
         sort_by: str = "Featured",
+        country: str = "US",
     ) -> list[dict[str, Any]]:
         """Search products by keyword with 24-hr caching."""
-        # Department and sort belong in the key: without them a "price: low to
-        # high" search silently returned the cached "featured" results.
+        # Department, sort, and country belong in the key
         cache_key = "search_" + urllib.parse.quote_plus(
-            f"{keywords}|{search_index}|{sort_by}|{item_count}", safe=""
+            f"{keywords}|{search_index}|{sort_by}|{item_count}|{country.upper()}", safe=""
         )
         cached = self._get_cached(cache_key)
         if cached:
             return cached
 
         items = await self._search_scraper(
-            keywords, count=item_count, search_index=search_index, sort_by=sort_by
+            keywords,
+            count=item_count,
+            search_index=search_index,
+            sort_by=sort_by,
+            country=country,
         )
         if items:
             self._set_cached(cache_key, items)
