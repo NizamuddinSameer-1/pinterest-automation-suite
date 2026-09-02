@@ -58,6 +58,7 @@ class Settings(BaseSettings):
     # See app/services/generation.py for the full list.
     generation_backend: str = "auto"
     generation_variation_count: int = 4
+    generation_stall_minutes: int = 30
     # Google Flow project workspace the browser automator types into. Empty means
     # "discover the first project link on the Flow home page" — the previous code
     # had one operator's project UUID compiled into it.

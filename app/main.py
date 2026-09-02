@@ -46,6 +46,18 @@ async def lifespan(app: FastAPI):
     from app.services.scheduler import start_scheduler, stop_scheduler
     start_scheduler()
 
+    # Recover any generation jobs stranded in GENERATING if the server was restarted
+    try:
+        from app.database import async_session
+        from app.services.job_reaper import reap_stalled_jobs
+
+        async with async_session() as db:
+            reaped = await reap_stalled_jobs(db)
+            if reaped:
+                logger.warning("Startup reaper recovered %d stalled job(s): %s", len(reaped), reaped)
+    except Exception as e:
+        logger.error("Startup job reaper sweep failed: %s", e)
+
     logger.info("Pinterest Realism Engine backend is READY.")
     yield
 

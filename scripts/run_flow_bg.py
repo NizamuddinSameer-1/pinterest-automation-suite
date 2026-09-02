@@ -111,14 +111,26 @@ async def main(job_id: str, backend: str, count: int) -> int:
     write_status("generating", requested_count=count, message=f"Running {backend}...")
 
     # ── 1. Generate ───────────────────────────────────────────────────
+    from app.services.flow_automator import GENERATION_TIMEOUT_SECONDS
+
+    hard_timeout = GENERATION_TIMEOUT_SECONDS + 60
     try:
-        result = await generate_variations(
-            prompt=prompt,
-            job_id=job_id,
-            count=count,
-            backend=backend,
-            reference_image=ref_image_path,
+        result = await asyncio.wait_for(
+            generate_variations(
+                prompt=prompt,
+                job_id=job_id,
+                count=count,
+                backend=backend,
+                reference_image=ref_image_path,
+            ),
+            timeout=hard_timeout,
         )
+    except asyncio.TimeoutError:
+        err_msg = f"Generation timed out after {hard_timeout}s (Playwright runner hung or took too long)."
+        print(f"[BG] {err_msg}")
+        write_status("error", error=err_msg)
+        await _mark_failed(job_id, err_msg)
+        return 1
     except (GenerationUnavailable, GenerationFailed) as e:
         attempts = getattr(e, "attempts", []) or []
         write_status("error", error=str(e), attempts=attempts)

@@ -18,6 +18,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.models.models import Product
+from app.services.amazon_paapi import extract_asin
+from app.services.product_dedup import compute_dedup_key, find_existing
 
 logger = logging.getLogger("pre.api.products")
 router = APIRouter(prefix="/api/products", tags=["Product Library"])
@@ -139,11 +141,40 @@ async def create_product(
         "allowed_scene_variations": [],
     }
 
+    # Check if this product already exists by ASIN or dedup_key
+    clean_asin = extract_asin(body.product_url) or extract_asin(body.affiliate_url)
+    existing = await find_existing(
+        db,
+        asin=clean_asin,
+        name=body.name,
+        brand=body.brand,
+        merchant=body.merchant or "Amazon",
+        url=body.product_url or body.affiliate_url,
+    )
+    if existing:
+        logger.info("Product dedup hit: reusing existing product %s (%r)", existing.id, existing.name)
+        # Fill in any missing metadata from this submission
+        if not existing.product_url and body.product_url:
+            existing.product_url = body.product_url
+        if not existing.affiliate_url and body.affiliate_url:
+            existing.affiliate_url = body.affiliate_url
+        if existing.price is None and body.price is not None:
+            existing.price = body.price
+        if clean_asin and not existing.asin:
+            existing.asin = clean_asin
+        await db.commit()
+        await db.refresh(existing)
+        return _serialize_product(existing)
+
+    dedup_k = compute_dedup_key(body.name, body.brand, body.merchant or "Amazon")
+
     product = Product(
         campaign_id=body.campaign_id,
         name=body.name,
         brand=body.brand,
         merchant=body.merchant or "Amazon",
+        asin=clean_asin,
+        dedup_key=dedup_k,
         product_url=body.product_url,
         affiliate_url=body.affiliate_url,
         price=body.price,

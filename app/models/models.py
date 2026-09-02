@@ -107,6 +107,8 @@ class Product(Base):
     name: Mapped[str] = mapped_column(String(256), nullable=False)
     brand: Mapped[str | None] = mapped_column(String(128))
     merchant: Mapped[str | None] = mapped_column(String(128))
+    asin: Mapped[str | None] = mapped_column(String(16), index=True)
+    dedup_key: Mapped[str | None] = mapped_column(String(64), index=True)
     product_url: Mapped[str | None] = mapped_column(String(1024))
     affiliate_url: Mapped[str | None] = mapped_column(String(1024))
     price: Mapped[float | None] = mapped_column(Float)

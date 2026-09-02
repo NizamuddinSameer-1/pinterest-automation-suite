@@ -31,6 +31,7 @@ import json
 import logging
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException, Query
@@ -344,6 +345,13 @@ def _launch_background_run(
     (run_dir / "prompt.txt").write_text(prompt_text, encoding="utf-8")
     if ref_image_path:
         (run_dir / "ref_image_path.txt").write_text(str(ref_image_path), encoding="utf-8")
+    bg_log = open(run_dir / "bg_log.txt", "w", encoding="utf-8")
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "scripts.run_flow_bg", job_id, "--backend", backend, "--count", str(count)],
+        cwd=str(Path(".").resolve()),
+        stdout=bg_log,
+        stderr=bg_log,
+    )
     (run_dir / "status.json").write_text(
         json.dumps({
             "status": "generating",
@@ -351,15 +359,10 @@ def _launch_background_run(
             "backend": backend,
             "requested_count": count,
             "ref_image_path": str(ref_image_path or ""),
+            "pid": proc.pid,
+            "started_at": datetime.now(timezone.utc).isoformat(),
         }),
         encoding="utf-8",
-    )
-    bg_log = open(run_dir / "bg_log.txt", "w", encoding="utf-8")
-    subprocess.Popen(
-        [sys.executable, "-m", "scripts.run_flow_bg", job_id, "--backend", backend, "--count", str(count)],
-        cwd=str(Path(".").resolve()),
-        stdout=bg_log,
-        stderr=bg_log,
     )
 
 

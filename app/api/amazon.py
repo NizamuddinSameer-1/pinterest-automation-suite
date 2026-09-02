@@ -24,6 +24,7 @@ from app.database import get_db
 from app.models.models import Product
 from app.services.affiliate_router import build_smart_redirect_url, clean_style_keywords
 from app.services.amazon_paapi import extract_asin, paapi_client
+from app.services.product_dedup import compute_dedup_key, find_existing
 
 logger = logging.getLogger("pre.api.amazon")
 router = APIRouter(prefix="/api/amazon", tags=["Amazon Product Discovery"])
@@ -224,17 +225,23 @@ async def ingest_amazon_product(
         "smart_affiliate_url": smart_url,
     }
 
-    # 5. ASIN Deduplication Check
-    query = select(Product).where(
-        (Product.product_url.like(f"%{asin}%")) | (Product.product_truth_json.like(f'%"asin": "{asin}"%'))
+    # 5. ASIN Deduplication Check via central helper
+    existing_product = await find_existing(
+        db,
+        asin=asin,
+        name=item["title"],
+        brand=brand,
+        merchant="Amazon",
     )
-    res = await db.execute(query)
-    existing_product = res.scalars().first()
+
+    dedup_k = compute_dedup_key(item["title"][:250], brand[:120] if brand else None, "Amazon")
 
     if existing_product:
         existing_product.name = item["title"][:250]
         existing_product.brand = brand[:120] if brand else None
         existing_product.merchant = "Amazon"
+        existing_product.asin = asin
+        existing_product.dedup_key = dedup_k
         existing_product.price = price_amount
         existing_product.currency = currency
         existing_product.category = category
@@ -258,6 +265,8 @@ async def ingest_amazon_product(
             name=item["title"][:250],
             brand=brand[:120] if brand else None,
             merchant="Amazon",
+            asin=asin,
+            dedup_key=dedup_k,
             product_url=product_url,
             affiliate_url=smart_url,
             price=price_amount,

@@ -37,6 +37,7 @@ from app.services.output_service import (
     record_generation_outputs,
 )
 from app.services.export_service import export_job_package
+from app.services.product_dedup import compute_dedup_key, find_existing
 from app.services.reference_context import load_reference_analysis
 
 router = APIRouter(prefix="/api/jobs", tags=["jobs"])
@@ -871,6 +872,13 @@ async def _ensure_product_for_reference(reference_id: str, db) -> str:
     analysis = json.loads(ar.analysis_json) if ar else {}
     pf = analysis.get("product_facts", {}) if isinstance(analysis, dict) else {}
     name = pf.get("product_name_guess") or "Reference Product"
+
+    # Deduplicate: check if a product with this normalized name already exists
+    existing_by_name = await find_existing(db, name=name)
+    if existing_by_name:
+        logger.info("Reference product dedup hit: reusing existing product %s (%r)", existing_by_name.id, existing_by_name.name)
+        return existing_by_name.id
+
     cat = pf.get("product_type") or "General"
     colors = pf.get("visible_colors") or []
     mats = pf.get("visible_materials") or []
@@ -887,9 +895,11 @@ async def _ensure_product_for_reference(reference_id: str, db) -> str:
             shutil.copy2(src, dest)
         except Exception:
             pass
+    dedup_k = compute_dedup_key(name)
     prod = Product(
         campaign_id=getattr(ref, "campaign_id", None),
         name=name,
+        dedup_key=dedup_k,
         category=cat,
         colors=json.dumps(colors) if colors else None,
         materials=json.dumps(mats) if mats else None,

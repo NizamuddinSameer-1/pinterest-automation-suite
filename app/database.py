@@ -87,6 +87,9 @@ def _add_missing_columns(sync_conn) -> None:  # type: ignore[no-untyped-def]
             sync_conn.execute(text(
                 f'ALTER TABLE "{table.name}" ADD COLUMN "{column.name}" {col_type}'
             ))
+            if column.index:
+                idx_name = f"ix_{table.name}_{column.name}"
+                sync_conn.execute(text(f'CREATE INDEX IF NOT EXISTS "{idx_name}" ON "{table.name}" ("{column.name}")'))
             logger.info("Migrated %s: added column %s %s", table.name, column.name, col_type)
 
 

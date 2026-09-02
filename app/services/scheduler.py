@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from datetime import datetime, timezone
 from typing import Any
 
@@ -33,6 +34,7 @@ logger = logging.getLogger("pre.scheduler")
 # How often to look for due entries. The queue stores minute-resolution times,
 # so 30s keeps drift under a minute without busy-looping on disk.
 TICK_SECONDS = 30
+REAPER_INTERVAL_SECONDS = 300  # 5 minutes
 
 _PUBLISH_LOCK = asyncio.Lock()
 _task: asyncio.Task | None = None
@@ -219,6 +221,7 @@ async def _loop() -> None:
         logger.error("Queue normalisation failed at startup: %s", e)
 
     logger.info("Pin scheduler started (tick %ss)", TICK_SECONDS)
+    last_reap = time.time()
     while True:
         try:
             await run_once()
@@ -227,6 +230,20 @@ async def _loop() -> None:
         except Exception as e:
             # A crashing tick must not kill the loop; the next tick retries.
             logger.error("Scheduler tick failed: %s", e, exc_info=True)
+
+        # Periodically reap dead/hung generation jobs (every 5 minutes)
+        now = time.time()
+        if now - last_reap >= REAPER_INTERVAL_SECONDS:
+            last_reap = now
+            try:
+                from app.database import async_session
+                from app.services.job_reaper import reap_stalled_jobs
+
+                async with async_session() as db:
+                    await reap_stalled_jobs(db)
+            except Exception as e:
+                logger.error("Scheduled job reaper sweep failed: %s", e)
+
         await asyncio.sleep(TICK_SECONDS)
 
 
