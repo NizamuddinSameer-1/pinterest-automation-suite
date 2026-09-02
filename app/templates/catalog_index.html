@@ -1,0 +1,960 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{{ catalog_title | default("SmartPickr | Curated Fashion & Lifestyle Lookbooks") }}</title>
+  <meta name="description" content="Explore our hand-picked collection of trending fashion, home, and lifestyle lookbooks with honest hands-on reviews.">
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;1,300;1,400&family=Montserrat:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --white:      #FFFFFF;
+      --off-white:  #F8F5F1;
+      --light-grey: #EDEAE6;
+      --mid-grey:   #C4BCBA;
+      --dark-grey:  #6B6058;
+      --black:      #1A1A1A;
+      --accent:     #997B5F;
+      --serif:      'Cormorant Garamond', Georgia, serif;
+      --sans:       'Montserrat', sans-serif;
+    }
+
+    html { scroll-behavior: smooth; }
+
+    body {
+      background: var(--white);
+      color: var(--black);
+      font-family: var(--sans);
+      font-size: 14px;
+      line-height: 1.6;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    a { text-decoration: none; color: inherit; }
+
+    img { display: block; }
+
+    /* ── HEADER ─────────────────────────────────── */
+    header {
+      position: sticky;
+      top: 0;
+      z-index: 200;
+      background: var(--white);
+      border-bottom: 1px solid var(--light-grey);
+    }
+
+    .nav-bar {
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      align-items: center;
+      max-width: 1300px;
+      margin: 0 auto;
+      padding: 0 48px;
+      height: 76px;
+    }
+
+    .nav-links {
+      display: flex;
+      gap: 36px;
+    }
+
+    .nav-links a {
+      font-size: 10.5px;
+      font-weight: 500;
+      letter-spacing: 2.8px;
+      text-transform: uppercase;
+      color: var(--black);
+      position: relative;
+      padding-bottom: 3px;
+    }
+
+    .nav-links a::after {
+      content: '';
+      position: absolute;
+      bottom: 0; left: 0;
+      width: 0; height: 1px;
+      background: var(--black);
+      transition: width .35s ease;
+    }
+
+    .nav-links a:hover::after { width: 100%; }
+
+    .site-logo {
+      font-family: var(--serif);
+      font-size: 30px;
+      font-weight: 400;
+      letter-spacing: 8px;
+      text-transform: uppercase;
+      text-align: center;
+      color: var(--black);
+    }
+
+    .nav-social {
+      display: flex;
+      gap: 14px;
+      justify-content: flex-end;
+      align-items: center;
+    }
+
+    .nav-social a {
+      width: 22px; height: 22px;
+      display: flex; align-items: center; justify-content: center;
+      opacity: 0.85;
+      transition: opacity .3s;
+    }
+
+    .nav-social a:hover { opacity: 0.45; }
+    .nav-social svg { width: 18px; height: 18px; fill: var(--black); }
+
+    /* Search Input in Nav */
+    .nav-search {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      border-bottom: 1px solid var(--light-grey);
+      padding: 4px 8px;
+      margin-right: 16px;
+    }
+
+    .nav-search input {
+      border: none;
+      outline: none;
+      font-family: var(--sans);
+      font-size: 11px;
+      letter-spacing: 1px;
+      background: transparent;
+      color: var(--black);
+      width: 110px;
+      transition: width .3s ease;
+    }
+
+    .nav-search input:focus { width: 160px; border-bottom: 1px solid var(--black); }
+    .nav-search input::placeholder { color: var(--mid-grey); text-transform: uppercase; font-size: 9.5px; letter-spacing: 1.5px; }
+
+    /* hamburger (mobile) */
+    .ham {
+      display: none;
+      flex-direction: column;
+      gap: 5px;
+      cursor: pointer;
+      padding: 4px;
+    }
+
+    .ham span {
+      display: block;
+      width: 22px; height: 1.5px;
+      background: var(--black);
+      transition: all .3s;
+    }
+
+    .mobile-menu {
+      display: none;
+      flex-direction: column;
+      gap: 0;
+      border-top: 1px solid var(--light-grey);
+      background: var(--white);
+    }
+
+    .mobile-menu.open { display: flex; }
+
+    .mobile-menu a {
+      padding: 14px 32px;
+      font-size: 10.5px;
+      font-weight: 500;
+      letter-spacing: 2.5px;
+      text-transform: uppercase;
+      border-bottom: 1px solid var(--light-grey);
+    }
+
+    /* ── HERO ────────────────────────────────────── */
+    .hero {
+      position: relative;
+      width: 100%;
+      height: 72vh;
+      min-height: 420px;
+      overflow: hidden;
+      background: var(--light-grey);
+    }
+
+    .hero img {
+      width: 100%; height: 100%;
+      object-fit: cover;
+      object-position: center 20%;
+    }
+
+    /* Gradient fallback hero when no lookbook images exist */
+    .hero-gradient {
+      width: 100%; height: 100%;
+      background: linear-gradient(135deg, #1A1A1A 0%, #997B5F 50%, #EDEAE6 100%);
+    }
+
+    .hero-veil {
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(to bottom, rgba(0,0,0,.08) 0%, rgba(0,0,0,.40) 100%);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 14px;
+    }
+
+    .hero-eye {
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 6px;
+      text-transform: uppercase;
+      color: rgba(255,255,255,.9);
+    }
+
+    .hero-title {
+      font-family: var(--serif);
+      font-size: clamp(56px, 10vw, 120px);
+      font-weight: 300;
+      letter-spacing: 14px;
+      text-transform: uppercase;
+      color: #fff;
+      line-height: 1;
+    }
+
+    .hero-sub {
+      font-size: 10.5px;
+      font-weight: 500;
+      letter-spacing: 4px;
+      text-transform: uppercase;
+      color: rgba(255,255,255,.8);
+      margin-top: 4px;
+    }
+
+    /* ── SHARED SECTION UTILITIES ───────────────── */
+    .section-wrap {
+      max-width: 1300px;
+      margin: 0 auto;
+      padding: 0 48px;
+    }
+
+    .section-heading {
+      font-family: var(--serif);
+      font-size: clamp(26px, 4vw, 46px);
+      font-weight: 300;
+      letter-spacing: 7px;
+      text-transform: uppercase;
+      text-align: center;
+      margin-bottom: 52px;
+    }
+
+    /* ── BLOG SECTION ───────────────────────────── */
+    .blog-section {
+      padding: 84px 0;
+    }
+
+    .blog-divider {
+      display: flex;
+      align-items: center;
+      gap: 20px;
+      margin-bottom: 18px;
+    }
+
+    .blog-divider .eyebrow {
+      font-size: 9.5px;
+      font-weight: 600;
+      letter-spacing: 3.5px;
+      text-transform: uppercase;
+      color: var(--dark-grey);
+      white-space: nowrap;
+    }
+
+    .blog-divider hr {
+      flex: 1;
+      border: none;
+      border-top: 1px solid var(--light-grey);
+    }
+
+    /* FIX 4: Changed from 4 cols to 3 cols for balanced rows */
+    .blog-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 36px;
+    }
+
+    .blog-card {
+      cursor: pointer;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .card-thumb {
+      width: 100%;
+      aspect-ratio: 3 / 4;
+      overflow: hidden;
+      background: var(--light-grey);
+      margin-bottom: 18px;
+      position: relative;
+    }
+
+    .card-thumb img {
+      width: 100%; height: 100%;
+      object-fit: cover;
+      transition: transform .65s cubic-bezier(.25,.46,.45,.94);
+    }
+
+    .blog-card:hover .card-thumb img { transform: scale(1.06); }
+
+    .card-cat {
+      font-size: 9px;
+      font-weight: 600;
+      letter-spacing: 3px;
+      text-transform: uppercase;
+      color: var(--accent);
+      margin-bottom: 9px;
+    }
+
+    .card-title {
+      font-family: var(--serif);
+      font-size: 18px;
+      font-weight: 400;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+      line-height: 1.35;
+      margin-bottom: 12px;
+      transition: color .3s;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+
+    .blog-card:hover .card-title { color: var(--accent); }
+
+    .card-excerpt {
+      font-size: 12px;
+      line-height: 1.8;
+      color: var(--dark-grey);
+      margin-bottom: 14px;
+      display: -webkit-box;
+      -webkit-line-clamp: 3;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+      flex-grow: 1;
+    }
+
+    .card-meta {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 9.5px;
+      letter-spacing: 1.8px;
+      text-transform: uppercase;
+      color: var(--mid-grey);
+      margin-top: auto;
+    }
+
+    .card-meta-dot {
+      width: 3px; height: 3px;
+      border-radius: 50%;
+      background: var(--mid-grey);
+    }
+
+    /* ── ABOUT SECTION ──────────────────────────── */
+    .about-section {
+      background: var(--off-white);
+      padding: 90px 0;
+    }
+
+    .about-inner {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 88px;
+      align-items: center;
+    }
+
+    .about-photo {
+      aspect-ratio: 4 / 5;
+      overflow: hidden;
+      background: var(--light-grey);
+    }
+
+    .about-photo img {
+      width: 100%; height: 100%;
+      object-fit: cover;
+      object-position: center top;
+    }
+
+    .about-content { padding: 20px 0; }
+
+    .about-eye {
+      font-size: 9.5px;
+      font-weight: 600;
+      letter-spacing: 4px;
+      text-transform: uppercase;
+      color: var(--accent);
+      margin-bottom: 18px;
+    }
+
+    .about-content h2 {
+      font-family: var(--serif);
+      font-size: clamp(30px, 4vw, 50px);
+      font-weight: 300;
+      letter-spacing: 6px;
+      text-transform: uppercase;
+      line-height: 1.2;
+      margin-bottom: 28px;
+    }
+
+    .about-content p {
+      font-size: 13.5px;
+      line-height: 1.95;
+      color: var(--dark-grey);
+      margin-bottom: 40px;
+    }
+
+    .btn {
+      display: inline-block;
+      font-family: var(--sans);
+      font-size: 9.5px;
+      font-weight: 600;
+      letter-spacing: 3.5px;
+      text-transform: uppercase;
+      padding: 15px 36px;
+      border: 1px solid var(--black);
+      color: var(--black);
+      cursor: pointer;
+      transition: background .3s, color .3s;
+    }
+
+    .btn:hover { background: var(--black); color: #fff; }
+
+    /* ── SHOP SECTION ───────────────────────────── */
+    .shop-section {
+      padding: 90px 0;
+    }
+
+    .shop-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 20px;
+    }
+
+    .shop-item {
+      position: relative;
+      aspect-ratio: 3 / 4;
+      overflow: hidden;
+      background: var(--light-grey);
+      cursor: pointer;
+    }
+
+    .shop-item img {
+      width: 100%; height: 100%;
+      object-fit: cover;
+      transition: transform .65s cubic-bezier(.25,.46,.45,.94);
+    }
+
+    .shop-item:hover img { transform: scale(1.05); }
+
+    .shop-veil {
+      position: absolute;
+      inset: 0;
+      background: rgba(0,0,0,0);
+      display: flex;
+      align-items: flex-end;
+      padding: 24px;
+      transition: background .4s;
+    }
+
+    .shop-item:hover .shop-veil { background: rgba(0,0,0,.28); }
+
+    .shop-label {
+      font-size: 9.5px;
+      font-weight: 600;
+      letter-spacing: 3px;
+      text-transform: uppercase;
+      color: #fff;
+      opacity: 0;
+      transform: translateY(8px);
+      transition: opacity .4s, transform .4s;
+    }
+
+    .shop-item:hover .shop-label { opacity: 1; transform: translateY(0); }
+
+    /* ── FOLLOW SECTION ─────────────────────────── */
+    .follow-section {
+      background: var(--black);
+      padding: 90px 0;
+    }
+
+    .follow-section .section-heading { color: #fff; }
+
+    .follow-grid {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 4px;
+    }
+
+    .follow-tile {
+      aspect-ratio: 1;
+      overflow: hidden;
+      background: var(--dark-grey);
+    }
+
+    .follow-tile a {
+      display: block;
+      width: 100%;
+      height: 100%;
+    }
+
+    .follow-tile img {
+      width: 100%; height: 100%;
+      object-fit: cover;
+      opacity: .65;
+      transition: opacity .4s, transform .5s;
+    }
+
+    .follow-tile:hover img { opacity: 1; transform: scale(1.05); }
+
+    /* ── FOOTER ─────────────────────────────────── */
+    footer {
+      background: var(--off-white);
+      border-top: 1px solid var(--light-grey);
+    }
+
+    .footer-body {
+      max-width: 1300px;
+      margin: 0 auto;
+      padding: 64px 48px 40px;
+    }
+
+    .footer-cols {
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      gap: 40px;
+      align-items: start;
+      margin-bottom: 60px;
+    }
+
+    .footer-nav h4 {
+      font-size: 9.5px;
+      font-weight: 600;
+      letter-spacing: 3.5px;
+      text-transform: uppercase;
+      color: var(--dark-grey);
+      margin-bottom: 22px;
+    }
+
+    .footer-nav ul {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 13px;
+    }
+
+    .footer-nav ul a {
+      font-size: 11px;
+      letter-spacing: 2.5px;
+      text-transform: uppercase;
+      color: var(--black);
+      transition: color .3s;
+    }
+
+    .footer-nav ul a:hover { color: var(--accent); }
+
+    .footer-logo {
+      font-family: var(--serif);
+      font-size: 28px;
+      font-weight: 400;
+      letter-spacing: 8px;
+      text-transform: uppercase;
+      text-align: center;
+      color: var(--black);
+    }
+
+    .footer-socials {
+      display: flex;
+      gap: 14px;
+      justify-content: flex-end;
+    }
+
+    .footer-socials a {
+      width: 22px; height: 22px;
+      display: flex; align-items: center; justify-content: center;
+      opacity: 0.7;
+      transition: opacity .3s;
+    }
+
+    .footer-socials a:hover { opacity: 1; }
+    .footer-socials svg { width: 18px; height: 18px; fill: var(--black); }
+
+    /* newsletter */
+    .newsletter-row {
+      display: flex;
+      align-items: center;
+      gap: 28px;
+      border-top: 1px solid var(--light-grey);
+      border-bottom: 1px solid var(--light-grey);
+      padding: 38px 0;
+      margin-bottom: 24px;
+    }
+
+    .nl-label {
+      font-size: 9.5px;
+      font-weight: 600;
+      letter-spacing: 3.5px;
+      text-transform: uppercase;
+      color: var(--dark-grey);
+      white-space: nowrap;
+    }
+
+    .nl-form {
+      display: flex;
+      flex: 1;
+    }
+
+    .nl-input {
+      flex: 1;
+      padding: 13px 20px;
+      border: 1px solid var(--mid-grey);
+      border-right: none;
+      background: #fff;
+      font-family: var(--sans);
+      font-size: 12px;
+      letter-spacing: 1px;
+      color: var(--black);
+      outline: none;
+      transition: border-color .3s;
+    }
+
+    .nl-input::placeholder { color: var(--mid-grey); }
+    .nl-input:focus { border-color: var(--black); }
+
+    .nl-btn {
+      padding: 13px 30px;
+      background: var(--black);
+      color: #fff;
+      font-family: var(--sans);
+      font-size: 9.5px;
+      font-weight: 600;
+      letter-spacing: 3px;
+      text-transform: uppercase;
+      border: 1px solid var(--black);
+      cursor: pointer;
+      transition: background .3s, color .3s;
+    }
+
+    .nl-btn:hover { background: transparent; color: var(--black); }
+
+    .footer-disclosure {
+      text-align: center;
+      font-size: 11px;
+      color: var(--dark-grey);
+      max-width: 680px;
+      margin: 0 auto 16px;
+      line-height: 1.6;
+    }
+
+    .footer-copy {
+      text-align: center;
+      font-size: 9.5px;
+      letter-spacing: 1.5px;
+      text-transform: uppercase;
+      color: var(--mid-grey);
+    }
+
+    /* ── ANIMATIONS ─────────────────────────────── */
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(28px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    .blog-card { animation: fadeUp .7s ease both; }
+
+    /* ── RESPONSIVE ─────────────────────────────── */
+    @media (max-width: 1024px) {
+      .blog-grid { grid-template-columns: repeat(2, 1fr); }
+      .about-inner { grid-template-columns: 1fr; gap: 40px; }
+      .about-photo { aspect-ratio: 16/9; }
+      .shop-grid { grid-template-columns: repeat(2, 1fr); }
+    }
+
+    @media (max-width: 768px) {
+      .nav-links { display: none; }
+      .ham { display: flex; }
+
+      .nav-bar {
+        grid-template-columns: auto 1fr auto;
+        padding: 0 22px;
+      }
+
+      .site-logo { text-align: left; font-size: 24px; letter-spacing: 6px; }
+
+      .section-wrap { padding: 0 22px; }
+      .blog-section, .shop-section { padding: 56px 0; }
+      .about-section, .follow-section { padding: 56px 0; }
+
+      .blog-grid { grid-template-columns: 1fr; gap: 40px; }
+      .shop-grid { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+      .follow-grid { grid-template-columns: repeat(3, 1fr); }
+
+      .footer-cols {
+        grid-template-columns: 1fr;
+        text-align: center;
+      }
+
+      .footer-nav ul { align-items: center; }
+      .footer-socials { justify-content: center; }
+      .newsletter-row { flex-direction: column; align-items: stretch; gap: 16px; }
+      .footer-body { padding: 48px 22px 32px; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- ═══ HEADER ═══════════════════════════════════════════════════════════ -->
+<header>
+  <nav class="nav-bar">
+    <!-- LEFT: nav links -->
+    <div class="nav-links">
+      <a href="#blog">Blog</a>
+      <a href="#about">About</a>
+      <a href="#shop">Shop</a>
+    </div>
+
+    <!-- HAMBURGER (mobile) -->
+    <div class="ham" id="ham" onclick="toggleMenu()" aria-label="Menu">
+      <span></span><span></span><span></span>
+    </div>
+
+    <!-- CENTER: logo -->
+    <a href="/" class="site-logo">SmartPickr</a>
+
+    <!-- RIGHT: search & socials -->
+    <div class="nav-social">
+      <div class="nav-search">
+        <input type="text" id="searchInput" placeholder="Search..." onkeyup="handleSearch(event)" aria-label="Search">
+      </div>
+      <a href="https://instagram.com" target="_blank" rel="noopener" aria-label="Instagram">
+        <svg viewBox="0 0 24 24"><path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838c-3.403 0-6.162 2.759-6.162 6.162s2.759 6.163 6.162 6.163 6.162-2.759 6.162-6.163c0-3.403-2.759-6.162-6.162-6.162zm0 10.162c-2.209 0-4-1.79-4-4 0-2.209 1.791-4 4-4s4 1.791 4 4c0 2.21-1.791 4-4 4zm6.406-11.845c-.796 0-1.441.645-1.441 1.44s.645 1.44 1.441 1.44c.795 0 1.439-.645 1.439-1.44s-.644-1.44-1.439-1.44z"/></svg>
+      </a>
+      <a href="https://facebook.com" target="_blank" rel="noopener" aria-label="Facebook">
+        <svg viewBox="0 0 24 24"><path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/></svg>
+      </a>
+    </div>
+  </nav>
+
+  <!-- Mobile menu -->
+  <div class="mobile-menu" id="mobileMenu">
+    <a href="#blog" onclick="toggleMenu()">Blog</a>
+    <a href="#about" onclick="toggleMenu()">About</a>
+    <a href="#shop" onclick="toggleMenu()">Shop</a>
+  </div>
+</header>
+
+<!-- ═══ HERO — FIX 1: Dynamic lookbook image instead of Unsplash stock ═══ -->
+<section class="hero">
+  {% if lookbooks and lookbooks[0].image_url %}
+  <img
+    src="{{ lookbooks[0].image_url }}"
+    alt="SmartPickr — {{ lookbooks[0].product_name }}"
+  />
+  {% else %}
+  <div class="hero-gradient"></div>
+  {% endif %}
+  <div class="hero-veil">
+    <p class="hero-eye">Welcome to</p>
+    <h1 class="hero-title">SmartPickr</h1>
+    <p class="hero-sub">Style · Beauty · Home · Life</p>
+  </div>
+</section>
+
+<!-- ═══ BLOG SECTION ════════════════════════════════════════════════════ -->
+<section class="blog-section" id="blog">
+  <div class="section-wrap">
+    <div class="blog-divider">
+      <span class="eyebrow">Latest Curated Posts</span>
+      <hr />
+    </div>
+    <h2 class="section-heading">The Blog</h2>
+
+    <div class="blog-grid" id="lookbookGrid">
+      {% for item in lookbooks %}
+      <article class="blog-card" onclick="window.location.href='{{ item.url }}'" data-title="{{ item.title | lower }} {{ item.product_name | lower }} {{ item.description | lower }}">
+        <div class="card-thumb">
+          {% if item.image_url %}
+          <img src="{{ item.image_url }}" alt="{{ item.title }}" loading="lazy" />
+          {% else %}
+          <div style="width:100%;height:100%;display:flex;align-items:center;justify-content:center;color:#6B6058;font-family:var(--serif);font-size:18px;">
+            {{ item.product_name }}
+          </div>
+          {% endif %}
+        </div>
+        <p class="card-cat">{{ item.badge | default("Curator's Pick") }}</p>
+        <h3 class="card-title">{{ item.title }}</h3>
+        <p class="card-excerpt">{{ item.description }}</p>
+        <div class="card-meta">
+          <span>SmartPickr</span>
+          <span class="card-meta-dot"></span>
+          <span>{{ item.date }}</span>
+        </div>
+      </article>
+      {% else %}
+      <div style="grid-column: 1 / -1; text-align: center; padding: 60px 20px; color: var(--dark-grey);">
+        <p style="font-family: var(--serif); font-size: 24px; margin-bottom: 8px;">No Published Lookbooks Found</p>
+        <p>Generate your first lookbook in the Creative Lab to populate this blog feed!</p>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</section>
+
+<!-- ═══ ABOUT SECTION — FIX 2: Dynamic lookbook image ═══ -->
+<section class="about-section" id="about">
+  <div class="section-wrap">
+    <div class="about-inner">
+      <div class="about-photo">
+        {% if lookbooks and lookbooks | length > 1 and lookbooks[1].image_url %}
+        <img src="{{ lookbooks[1].image_url }}" alt="About SmartPickr" loading="lazy" />
+        {% elif lookbooks and lookbooks[0].image_url %}
+        <img src="{{ lookbooks[0].image_url }}" alt="About SmartPickr" loading="lazy" />
+        {% else %}
+        <div style="width:100%;height:100%;background:linear-gradient(135deg,#997B5F,#EDEAE6);display:flex;align-items:center;justify-content:center;font-family:var(--serif);font-size:36px;color:#fff;letter-spacing:6px;">SP</div>
+        {% endif %}
+      </div>
+      <div class="about-content">
+        <p class="about-eye">Get to Know Us</p>
+        <h2>About SmartPickr</h2>
+        <p>SmartPickr is your dedicated editorial destination for curated fashion lookbooks, honest try-on evaluations, tactile quality breakdowns, and trending lifestyle picks. We rigorously test and review viral finds so you can shop with complete confidence.</p>
+        <a href="#blog" class="btn">Explore All Stories</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ═══ SHOP SECTION ════════════════════════════════════════════════════ -->
+<section class="shop-section" id="shop">
+  <div class="section-wrap">
+    <h2 class="section-heading">Shop The Look</h2>
+    <div class="shop-grid">
+      {% for item in lookbooks[:3] %}
+      <div class="shop-item" onclick="window.location.href='{{ item.url }}'">
+        {% if item.image_url %}
+        <img src="{{ item.image_url }}" alt="{{ item.title }}" loading="lazy" />
+        {% else %}
+        <div style="width:100%;height:100%;background:#EDEAE6;"></div>
+        {% endif %}
+        <div class="shop-veil"><span class="shop-label">View Lookbook</span></div>
+      </div>
+      {% else %}
+      <div style="grid-column: 1 / -1; text-align: center; padding: 60px 20px; color: var(--dark-grey);">
+        <p style="font-family: var(--serif); font-size: 20px;">No lookbooks published yet.</p>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</section>
+
+<!-- ═══ FOLLOW SECTION — FIX 3: Dynamic lookbook images ═══ -->
+<section class="follow-section">
+  <div class="section-wrap">
+    <h2 class="section-heading">Follow Us Elsewhere</h2>
+    <div class="follow-grid">
+      {% for item in lookbooks[:5] %}
+      <div class="follow-tile">
+        <a href="{{ item.url }}">
+          {% if item.image_url %}
+          <img src="{{ item.image_url }}" alt="{{ item.product_name }}" loading="lazy" />
+          {% else %}
+          <div style="width:100%;height:100%;background:var(--dark-grey);"></div>
+          {% endif %}
+        </a>
+      </div>
+      {% else %}
+      {# Fallback: show neutral colored tiles #}
+      {% for color in ['#5C4B3A','#7B6B5A','#997B5F','#7B6B5A','#5C4B3A'] %}
+      <div class="follow-tile">
+        <div style="width:100%;height:100%;background:{{ color }};"></div>
+      </div>
+      {% endfor %}
+      {% endfor %}
+    </div>
+  </div>
+</section>
+
+<!-- ═══ FOOTER ══════════════════════════════════════════════════════════ -->
+<footer>
+  <div class="footer-body">
+
+    <div class="footer-cols">
+      <!-- Left nav -->
+      <div class="footer-nav">
+        <h4>Navigate</h4>
+        <ul>
+          <li><a href="#blog">Blog</a></li>
+          <li><a href="#about">About</a></li>
+          <li><a href="#shop">Shop</a></li>
+        </ul>
+      </div>
+
+      <!-- Center logo -->
+      <div class="footer-logo">SmartPickr</div>
+
+      <!-- Right social -->
+      <div class="footer-socials">
+        <a href="https://instagram.com" target="_blank" rel="noopener" aria-label="Instagram">
+          <svg viewBox="0 0 24 24"><path d="M12 2.163c3.204 0 3.584.012 4.85.07 3.252.148 4.771 1.691 4.919 4.919.058 1.265.069 1.645.069 4.849 0 3.205-.012 3.584-.069 4.849-.149 3.225-1.664 4.771-4.919 4.919-1.266.058-1.644.07-4.85.07-3.204 0-3.584-.012-4.849-.07-3.26-.149-4.771-1.699-4.919-4.92-.058-1.265-.07-1.644-.07-4.849 0-3.204.013-3.583.07-4.849.149-3.227 1.664-4.771 4.919-4.919 1.266-.057 1.645-.069 4.849-.069zm0-2.163c-3.259 0-3.667.014-4.947.072-4.358.2-6.78 2.618-6.98 6.98-.059 1.281-.073 1.689-.073 4.948 0 3.259.014 3.668.072 4.948.2 4.358 2.618 6.78 6.98 6.98 1.281.058 1.689.072 4.948.072 3.259 0 3.668-.014 4.948-.072 4.354-.2 6.782-2.618 6.979-6.98.059-1.28.073-1.689.073-4.948 0-3.259-.014-3.667-.072-4.947-.196-4.354-2.617-6.78-6.979-6.98-1.281-.059-1.69-.073-4.949-.073zm0 5.838c-3.403 0-6.162 2.759-6.162 6.162s2.759 6.163 6.162 6.163 6.162-2.759 6.162-6.163c0-3.403-2.759-6.162-6.162-6.162zm0 10.162c-2.209 0-4-1.79-4-4 0-2.209 1.791-4 4-4s4 1.791 4 4c0 2.21-1.791 4-4 4zm6.406-11.845c-.796 0-1.441.645-1.441 1.44s.645 1.44 1.441 1.44c.795 0 1.439-.645 1.439-1.44s-.644-1.44-1.439-1.44z"/></svg>
+        </a>
+        <a href="https://facebook.com" target="_blank" rel="noopener" aria-label="Facebook">
+          <svg viewBox="0 0 24 24"><path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z"/></svg>
+        </a>
+      </div>
+    </div>
+
+    <!-- Newsletter -->
+    <div class="newsletter-row">
+      <span class="nl-label">Subscribe to Newsletter</span>
+      <div class="nl-form">
+        <input class="nl-input" type="email" placeholder="Enter your email here" />
+        <button class="nl-btn">Subscribe</button>
+      </div>
+    </div>
+
+    <p class="footer-disclosure">
+      <strong>FTC Disclosure:</strong> As an Amazon Associate, SmartPickr earns from qualifying purchases at no additional cost to you. Pricing and availability are verified and subject to change.
+    </p>
+
+    <p class="footer-copy">© {{ year }} by SmartPickr. All rights reserved.</p>
+  </div>
+</footer>
+
+<script>
+  // Mobile menu toggle
+  function toggleMenu() {
+    const menu = document.getElementById('mobileMenu');
+    menu.classList.toggle('open');
+  }
+
+  // FIX 5: Search handler with Enter key support + live filtering
+  function handleSearch(event) {
+    filterLookbooks();
+    if (event.key === 'Enter') {
+      document.getElementById('blog').scrollIntoView({ behavior: 'smooth' });
+    }
+  }
+
+  function filterLookbooks() {
+    const q = document.getElementById('searchInput').value.toLowerCase().trim();
+    const cards = document.querySelectorAll('.blog-card');
+    cards.forEach(card => {
+      const text = card.getAttribute('data-title') || '';
+      if (text.includes(q)) {
+        card.style.display = 'flex';
+      } else {
+        card.style.display = 'none';
+      }
+    });
+  }
+</script>
+
+</body>
+</html>

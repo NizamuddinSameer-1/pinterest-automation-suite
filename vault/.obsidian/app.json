@@ -1,0 +1,15 @@
+{
+  "legacyEditor": false,
+  "livePreview": true,
+  "showLineNumber": true,
+  "useTab": true,
+  "tabSize": 2,
+  "autoPairMarkdown": true,
+  "autoPairBrackets": true,
+  "foldHeading": true,
+  "foldIndent": true,
+  "strictLineBreaks": false,
+  "readableLineLength": false,
+  "alwaysUpdateLinks": true,
+  "attachmentFolderPath": "Attachments"
+}

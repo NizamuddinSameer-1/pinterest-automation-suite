@@ -1,0 +1,77 @@
+---
+node_type: generation_job
+job_id: "eab2ad8a-791d-4142-be06-0aa2e2848abe"
+reference_id: "77c0549a-403a-4fe8-9714-6aa36ee64118"
+product_name: "Simple Modern Halloween Tumbler with Handle | 40oz | Halloween"
+state: "OUTPUT_UPLOADED"
+prompt_version: 1
+is_rework: false
+updated: "2026-08-29 11:10:15 UTC"
+tags:
+  - job/live
+  - state/output_uploaded
+---
+
+# ⚙️ Generation Job Node: eab2ad8a-791d-4142-be06-0aa2e2848abe
+
+- **Current Lifecycle State:** `OUTPUT_UPLOADED`
+- **Reference Style:** [[Ref - 77c0549a-403a-4fe8-9714-6aa36ee64118]]
+- **Product Subject:** [[Product - Simple Modern Halloween Tumbler with Handle  40oz  Halloween]]
+- **Campaign:** [[Campaign - Unassigned]]
+- **Prompt Version:** `v1` 
+- **Last Sync:** `2026-08-29 11:10:15 UTC`
+
+---
+
+## 🎬 Stage 3: Scene Director Scenario
+
+- **Format:** `in_use`
+- **Motivation:** *"Someone photographed the pan mid-cook because the coating actually released"*
+- **Location:** in a small kitchen
+- **Human Action:** Product mid-use with food in it
+- **Camera Position:** Handheld, looking down at the counter or hob
+- **Background Elements:** kitchen counter, hob
+
+---
+
+## ✍️ Stage 4: Compiled Google Flow Prompt
+
+```text
+A spontaneous, candid UGC smartphone photograph taken in in a small kitchen. Moment: Someone photographed the pan mid-cook because the coating actually released. Product mid-use with food in it. Captured with the product is mid-use with food in it, resting on kitchen counter. Aesthetic context: subtle halloween mood naturally integrated through surrounding props and styling.
+
+Featuring Simple Modern Halloween Tumbler with Handle | 40oz | Halloween — a kitchen item (scale: counter-height view; hands in frame make the size read). Strictly accurate product details: Fabric and material composition: Stainless Steel, Stainless steel, Color: Spooky: Graveyard Garden, Color: Spooky: Graveyard Garden, Product Style: Trek Tumbler, Theme: Travel, Shape: Round. Realistic physical materials (Stainless Steel, Stainless steel) with high_tactile tactile surface texture and natural_fabric_grain natural manufacturing/wear imperfections. (Do not invent: Do not add logos, graphics, or branding not on the original product, Do not alter the product's neckline, sleeve length, or pocket placement, Do not invent extra zippers, hoods, straps or hardware, Do not change the stated material composition or colour). (Allowed variations: Plausible real-world model poses and candid body angles, Natural indoor and outdoor ambient daylight conditions, Context-appropriate candid lifestyle and streetwear framing).
+
+Verified product specifications from the merchant listing (render these exactly, do not substitute): material — Stainless Steel; material type — Stainless Steel; material features — Insulated. Real physical size for scale: 40 fluid ounces, 1.2 pounds.
+
+Environment: in a small kitchen with low lived-in clutter and believable real-world asymmetry. Background details include: kitchen counter, hob. Avoid empty showroom staging or artificial sterile backgrounds.
+
+Camera & Composition: Handheld modern smartphone lens, medium framing with a natural crop, positioned human_standing (Handheld, looking down at the counter or hob). Composition is naturally slightly_off_center with organic edge overlap. Human presence is partial_hand_arm with natural, unposed body posture and authentic skin texture.
+
+Lighting: Authentic natural daylight lighting with neutral color balance and natural contrast. Realistic light bounce and natural soft shadows. Optical specs: natural smartphone sharpness, subtle sensor grain, restrained computational dynamic range, natural focal falloff without artificial digital blur or fake studio rim lights.
+
+Style: Authentic everyday lifestyle photograph, un-staged UGC, anti-studio, anti-cinematic.
+
+REALISM MICRO-TRIGGERS — concrete physical details to enforce authenticity:
+- High-resolution close-up of fingers showing visible skin pores, fine knuckle creases, and a realistic cuticle line with a subtle glistening sheen of freshly applied cuticle oil.
+- Visible skin compression and subtle blanching around the fingertips from a firm, natural physical grip on the object.
+- Authentic unretouched skin texture with fine surface pores, natural epidermal micro-ridges, and delicate hair fuzz visible under side lighting.
+- Relaxed, unposed hand resting with slightly curved fingers, natural knuckle folds, and subtle blue veins beneath the skin surface.
+- Natural wrist angle showing authentic tendon lines, skin stretching across the carpals, and a delicate metal bracelet catching light.
+- Candid hand thumb and index forming a precise pinch showing tiny white hangnail flap lifting beside the cuticle, authentic skin texture with natural specular sheen under direct halogen desk lamp.
+- 24mm equivalent smartphone wide-angle lens showing subtle perspective expansion at the outer perimeter of the frame.
+- Balanced indoor smartphone tone-mapping with subtle chroma noise and natural grain in the deep shadow crevices.
+- Genuine shallow depth-of-field transition with smooth focal falloff, completely avoiding artificial digital Gaussian masking.
+- Wooden desk corner cluttered with a spiral notebook, a metal ballpoint pen, an elastic hair tie, and loose receipts.
+
+AVOID:
+Studio product photography, catalog styling, cinematic lighting, extreme HDR, artificial bokeh, excessive sharpness, CGI appearance, impossible geometry, malformed anatomy, invented product features, food advertising gloss, steam added artificially, invented capacity markings.
+```
+
+---
+
+## 🔗 Graph Relationships & Backlinks
+- [[Ref - 77c0549a-403a-4fe8-9714-6aa36ee64118]]
+- [[Product - Simple Modern Halloween Tumbler with Handle  40oz  Halloween]]
+- [[Campaign - Unassigned]]
+- [[🎨 Prompt Engineering Playbook]]
+- [[🗺️ System Map & Architecture MOC]]

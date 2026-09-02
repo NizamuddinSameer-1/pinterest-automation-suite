@@ -1,0 +1,1529 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{{ title }} | SmartPickr Editorial</title>
+  <meta name="description" content="{{ subheadline }}">
+  <link rel="canonical" href="{{ canonical_url or affiliate_url }}">
+  
+  <!-- Open Graph / Pinterest Preview -->
+  <meta property="og:title" content="{{ title }}">
+  <meta property="og:description" content="{{ subheadline }}">
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="{{ canonical_url or affiliate_url }}">
+  {% if first_image_url %}
+  <meta property="og:image" content="{{ first_image_url }}">
+  <meta property="og:image:secure_url" content="{{ first_image_url }}">
+  <meta property="og:image:width" content="1080">
+  <meta property="og:image:height" content="1920">
+  <meta property="og:image:type" content="image/webp">
+  {% endif %}
+
+  <!-- Twitter Card -->
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="{{ title }}">
+  <meta name="twitter:description" content="{{ subheadline }}">
+  {% if first_image_url %}
+  <meta name="twitter:image" content="{{ first_image_url }}">
+  {% endif %}
+
+  <!-- JSON-LD Structured Data (Product + Review + FAQPage) -->
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@graph": [
+      {
+        "@type": "Product",
+        "name": "{{ product_name }}",
+        "image": "{{ first_image_url }}",
+        "description": "{{ subheadline }}",
+        "brand": {
+          "@type": "Brand",
+          "name": "{{ brand or 'Curated Collection' }}"
+        },
+        "offers": {
+          "@type": "Offer",
+          "url": "{{ affiliate_url }}",
+          "priceCurrency": "{{ product_data.get('currency', 'USD') }}",
+          "price": "{{ product_data.get('price', '') }}",
+          "availability": "https://schema.org/InStock",
+          "seller": {
+            "@type": "Organization",
+            "name": "Amazon"
+          }
+        }
+      },
+      {
+        "@type": "Review",
+        "itemReviewed": {
+          "@type": "Product",
+          "name": "{{ product_name }}"
+        },
+        "reviewRating": {
+          "@type": "Rating",
+          "ratingValue": "{{ quick_verdict.get('star_rating', '4.9') if quick_verdict else '4.9' }}",
+          "bestRating": "5"
+        },
+        "author": {
+          "@type": "Person",
+          "name": "{{ author_name or 'Elena Vance' }}"
+        },
+        "reviewBody": "{{ story_intro }}"
+      }
+      {% if objections_faq %}
+      ,
+      {
+        "@type": "FAQPage",
+        "mainEntity": [
+          {% for faq in objections_faq %}
+          {
+            "@type": "Question",
+            "name": "{{ faq.question }}",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "{{ faq.answer }}"
+            }
+          }{% if not loop.last %},{% endif %}
+          {% endfor %}
+        ]
+      }
+      {% endif %}
+    ]
+  }
+  </script>
+
+  <!-- Google Fonts: Playfair Display & Jost -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,500;0,600;0,700;1,400;1,600&family=Jost:ital,wght@0,300;0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
+
+  <style>
+    :root {
+      --bg: #FAFAF8;
+      --card-bg: #FFFFFF;
+      --ink: #141412;
+      --ink-soft: #5C5A55;
+      --ink-muted: #8C8880;
+      --border: #E8E6DF;
+      --border-dark: #D4D1C7;
+      --accent: #9C7A4A;
+      --accent-light: #F4EFE6;
+      --green-dark: #065F46;
+      --green-bg: #ECFDF5;
+      --green-border: #A7F3D0;
+      --amber-dark: #92400E;
+      --amber-bg: #FFFBEB;
+      --amber-border: #FDE68A;
+      --btn-bg: #141311;
+      --btn-text: #FFFFFF;
+      --font-display: 'Playfair Display', Georgia, 'Times New Roman', serif;
+      --font-body: 'Jost', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      --max: 1140px;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    body {
+      font-family: var(--font-body);
+      color: var(--ink);
+      background: var(--bg);
+      -webkit-font-smoothing: antialiased;
+      line-height: 1.68;
+      font-size: 16.5px;
+    }
+    a { color: inherit; text-decoration: none; }
+    img { display: block; max-width: 100%; height: auto; }
+    button { font-family: inherit; cursor: pointer; }
+
+    .wrap { max-width: var(--max); margin: 0 auto; padding: 0 20px; }
+
+    /* ---------- Masthead / Header ---------- */
+    .site-header {
+      position: sticky;
+      top: 0;
+      z-index: 100;
+      background: rgba(255, 255, 255, 0.96);
+      backdrop-filter: blur(10px);
+      border-bottom: 1px solid var(--border);
+    }
+    .header-row {
+      max-width: var(--max);
+      margin: 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      height: 60px;
+      padding: 0 24px;
+    }
+    .header-logo {
+      font-family: var(--font-display);
+      font-size: 21px;
+      font-weight: 700;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--ink);
+    }
+    .header-badge {
+      font-size: 11.5px;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      font-weight: 600;
+      color: var(--accent);
+      background: var(--accent-light);
+      padding: 4px 10px;
+      border-radius: 4px;
+    }
+
+    /* ---------- Content Layout Grid ---------- */
+    .content-grid {
+      max-width: var(--max);
+      margin: 32px auto 60px auto;
+      padding: 0 24px;
+      display: grid;
+      grid-template-columns: 1fr 340px;
+      gap: 48px;
+    }
+
+    /* ---------- Article Main Card ---------- */
+    main { min-width: 0; }
+    .post-card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 44px 48px;
+      box-shadow: 0 2px 12px rgba(0, 0, 0, 0.025);
+    }
+
+    .breadcrumbs {
+      font-size: 12.5px;
+      color: var(--ink-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 14px;
+    }
+    .breadcrumbs a { color: var(--ink); font-weight: 500; }
+    .breadcrumbs span { margin: 0 6px; color: var(--border-dark); }
+
+    .post-title {
+      font-family: var(--font-display);
+      font-size: 38px;
+      line-height: 1.22;
+      font-weight: 700;
+      color: var(--ink);
+      margin: 0 0 16px 0;
+      letter-spacing: -0.01em;
+    }
+    .post-subtitle {
+      font-size: 19px;
+      line-height: 1.5;
+      color: var(--ink-soft);
+      font-weight: 300;
+      margin: 0 0 26px 0;
+    }
+
+    /* Author & Reading Meta */
+    .author-meta {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 16px 0;
+      border-top: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 20px;
+    }
+    .author-avatar {
+      width: 44px;
+      height: 44px;
+      border-radius: 50%;
+      background: #E8E5DD;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 600;
+      font-size: 15px;
+      color: var(--ink);
+    }
+    .author-details {
+      display: flex;
+      flex-direction: column;
+    }
+    .author-name {
+      font-weight: 600;
+      font-size: 14.5px;
+      color: var(--ink);
+    }
+    .author-role {
+      font-size: 12.5px;
+      color: var(--ink-muted);
+    }
+
+    /* GAP 3 FIX: Mandatory Top FTC Disclosure Notice (Placed BEFORE any affiliate CTA) */
+    .ftc-top-banner {
+      background: #FAF9F6;
+      border: 1px solid #E5E2D8;
+      border-radius: 6px;
+      padding: 10px 14px;
+      margin-bottom: 28px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .ftc-badge {
+      font-size: 10.5px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      background: #E2DDD2;
+      color: #38352F;
+      padding: 3px 8px;
+      border-radius: 3px;
+      white-space: nowrap;
+    }
+    .ftc-top-banner p {
+      margin: 0;
+      font-size: 12px;
+      color: var(--ink-soft);
+      line-height: 1.45;
+    }
+
+    /* ---------- Hero Image Frame ---------- */
+    .hero-frame {
+      position: relative;
+      border-radius: 10px;
+      overflow: hidden;
+      background: #1C1B18;
+      margin-bottom: 30px;
+      box-shadow: 0 8px 30px rgba(0, 0, 0, 0.07);
+    }
+    .hero-frame img {
+      width: 100%;
+      height: auto;
+      max-height: 680px;
+      object-fit: cover;
+      object-position: center top;
+      margin: 0 auto;
+    }
+    .hero-tag {
+      position: absolute;
+      top: 16px;
+      left: 16px;
+      background: rgba(20, 19, 17, 0.88);
+      color: #FFFFFF;
+      backdrop-filter: blur(8px);
+      font-size: 12px;
+      font-weight: 500;
+      padding: 6px 14px;
+      border-radius: 20px;
+      letter-spacing: 0.04em;
+    }
+
+    /* ---------- Executive Verdict Buy Box ---------- */
+    .verdict-box {
+      background: #FAF9F5;
+      border: 1px solid #E2DFD5;
+      border-radius: 10px;
+      padding: 24px 28px;
+      margin-bottom: 36px;
+    }
+    .verdict-top-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-bottom: 16px;
+      padding-bottom: 14px;
+      border-bottom: 1px solid var(--border);
+    }
+    .scenario-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: #EAE6DB;
+      color: var(--ink);
+      font-size: 12px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      padding: 5px 12px;
+      border-radius: 4px;
+    }
+    .testing-time-badge {
+      font-size: 11.5px;
+      font-weight: 600;
+      color: #065F46;
+      background: #ECFDF5;
+      padding: 4px 10px;
+      border-radius: 4px;
+      border: 1px solid #A7F3D0;
+    }
+    .rating-pill {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 13px;
+      font-weight: 600;
+      color: #D97706;
+    }
+    .price-row {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      margin-bottom: 20px;
+    }
+    .price-amount {
+      font-family: var(--font-display);
+      font-size: 32px;
+      font-weight: 700;
+      color: var(--ink);
+    }
+    .prime-badge {
+      background: #0284C7;
+      color: #FFFFFF;
+      font-size: 11px;
+      font-weight: 700;
+      padding: 3px 8px;
+      border-radius: 3px;
+      margin-left: 8px;
+      vertical-align: middle;
+      letter-spacing: 0.04em;
+    }
+
+    /* High-Contrast CTA Buttons */
+    .btn-cta-primary {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      width: 100%;
+      background: var(--btn-bg);
+      color: var(--btn-text);
+      font-weight: 600;
+      font-size: 16px;
+      letter-spacing: 0.03em;
+      padding: 16px 28px;
+      border-radius: 8px;
+      transition: all 0.2s ease;
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.12);
+      margin-bottom: 14px;
+    }
+    .btn-cta-primary:hover {
+      background: #2C2A26;
+      transform: translateY(-1px);
+      box-shadow: 0 6px 20px rgba(0, 0, 0, 0.18);
+    }
+
+    .trust-chips {
+      display: flex;
+      justify-content: center;
+      gap: 16px;
+      font-size: 11.5px;
+      color: var(--ink-soft);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-top: 10px;
+    }
+
+    /* GAP 1 FIX: Above-the-Fold Quick Comparison Matrix */
+    .comparison-section {
+      margin: 32px 0;
+      background: #FFFFFF;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 24px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.02);
+    }
+    .comparison-section h3 {
+      font-family: var(--font-display);
+      font-size: 21px;
+      font-weight: 700;
+      margin: 0 0 16px 0;
+      color: var(--ink);
+    }
+    .comparison-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
+    }
+    .comp-card {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px;
+      background: #FAF9F6;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      position: relative;
+    }
+    .comp-card.featured-card {
+      background: #FFFFFF;
+      border: 2px solid var(--ink);
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.06);
+    }
+    .comp-badge {
+      font-size: 10.5px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      padding: 3px 8px;
+      border-radius: 3px;
+      display: inline-block;
+      margin-bottom: 8px;
+    }
+    .featured-card .comp-badge {
+      background: var(--ink);
+      color: #FFFFFF;
+    }
+    .comp-card:not(.featured-card) .comp-badge {
+      background: #EAE6DD;
+      color: var(--ink-soft);
+    }
+    .comp-name {
+      font-weight: 700;
+      font-size: 14.5px;
+      color: var(--ink);
+      margin-bottom: 6px;
+      line-height: 1.35;
+    }
+    .comp-score {
+      font-size: 13px;
+      font-weight: 600;
+      color: #D97706;
+      margin-bottom: 8px;
+    }
+    .comp-details {
+      font-size: 12.5px;
+      color: var(--ink-soft);
+      line-height: 1.5;
+      margin-bottom: 12px;
+    }
+    .comp-price-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      border-top: 1px solid var(--border);
+      padding-top: 10px;
+      margin-top: auto;
+    }
+    .comp-price {
+      font-weight: 700;
+      font-size: 16px;
+      color: var(--ink);
+    }
+    .comp-btn {
+      font-size: 12px;
+      font-weight: 600;
+      background: var(--ink);
+      color: #FFFFFF;
+      padding: 6px 12px;
+      border-radius: 4px;
+      display: inline-block;
+    }
+
+    /* ---------- Editorial Prose Body & GAP 2 UGC Narrative ---------- */
+    .editorial-prose p {
+      font-size: 17px;
+      line-height: 1.78;
+      color: #262522;
+      margin-bottom: 22px;
+    }
+    .editorial-prose h2, .editorial-prose h3 {
+      font-family: var(--font-display);
+      color: var(--ink);
+      font-weight: 700;
+      margin-top: 42px;
+      margin-bottom: 18px;
+    }
+    .editorial-prose h2 { font-size: 28px; line-height: 1.3; }
+    .editorial-prose h3 { font-size: 23px; line-height: 1.35; }
+
+    /* UGC 5-Stage Testing Log Cards */
+    .testing-log-box {
+      background: #F7F6F2;
+      border: 1px solid #E2DFD5;
+      border-radius: 10px;
+      padding: 24px 28px;
+      margin: 36px 0;
+    }
+    .testing-log-box h3 {
+      margin-top: 0;
+      font-size: 22px;
+      margin-bottom: 16px;
+    }
+    .log-item {
+      border-left: 3px solid var(--accent);
+      padding-left: 16px;
+      margin-bottom: 18px;
+    }
+    .log-phase {
+      font-size: 13.5px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--accent);
+      margin-bottom: 4px;
+    }
+    .log-desc {
+      font-size: 14.5px;
+      color: #2B2926;
+      line-height: 1.6;
+      margin: 0;
+    }
+
+    /* Pullquote Verdict */
+    blockquote.editorial-quote {
+      margin: 32px 0;
+      padding: 22px 28px;
+      background: #F6F4EE;
+      border-left: 4px solid var(--accent);
+      border-radius: 0 8px 8px 0;
+      font-family: var(--font-display);
+      font-size: 19px;
+      font-style: italic;
+      color: #1F1E1B;
+      line-height: 1.6;
+    }
+    blockquote.editorial-quote cite {
+      display: block;
+      margin-top: 10px;
+      font-family: var(--font-body);
+      font-size: 12px;
+      font-style: normal;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      color: var(--accent);
+    }
+
+    /* ---------- Multi-Look Sequential Sections ---------- */
+    .look-section {
+      margin: 48px 0;
+      padding-top: 28px;
+      border-top: 1px solid var(--border);
+    }
+    .look-header {
+      margin-bottom: 20px;
+    }
+    .look-badge {
+      display: inline-block;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 6px;
+    }
+    .look-title {
+      font-family: var(--font-display);
+      font-size: 26px;
+      font-weight: 700;
+      color: var(--ink);
+      margin: 0 0 6px 0;
+    }
+    .look-subtitle {
+      font-size: 15px;
+      color: var(--ink-soft);
+      font-weight: 400;
+      margin: 0;
+    }
+
+    .look-image-card {
+      position: relative;
+      border-radius: 10px;
+      overflow: hidden;
+      background: #181715;
+      margin: 22px 0 24px 0;
+      box-shadow: 0 6px 24px rgba(0, 0, 0, 0.06);
+    }
+    .look-image-card img {
+      width: 100%;
+      height: auto;
+      max-height: 640px;
+      object-fit: cover;
+      object-position: center top;
+      margin: 0 auto;
+    }
+    .look-angle-chip {
+      position: absolute;
+      bottom: 16px;
+      left: 16px;
+      background: rgba(18, 17, 15, 0.85);
+      color: #FFFFFF;
+      backdrop-filter: blur(6px);
+      font-size: 11.5px;
+      font-weight: 500;
+      padding: 5px 12px;
+      border-radius: 20px;
+    }
+
+    /* Styling Box */
+    .styling-box {
+      background: #F7F6F2;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px 20px;
+      margin: 18px 0;
+      display: flex;
+      gap: 14px;
+      align-items: flex-start;
+    }
+    .styling-box-icon {
+      font-size: 20px;
+      line-height: 1;
+      margin-top: 2px;
+    }
+    .styling-box-text {
+      font-size: 14.5px;
+      line-height: 1.6;
+      color: #383632;
+    }
+    .styling-box-text strong {
+      color: var(--ink);
+      font-weight: 600;
+    }
+
+    /* Contextual Look Inline CTA */
+    .btn-look-cta {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      background: #FFFFFF;
+      color: var(--ink);
+      border: 1.5px solid var(--ink);
+      font-weight: 600;
+      font-size: 14px;
+      letter-spacing: 0.02em;
+      padding: 10px 20px;
+      border-radius: 6px;
+      transition: all 0.15s ease;
+      margin-top: 6px;
+      margin-bottom: 12px;
+    }
+    .btn-look-cta:hover {
+      background: var(--ink);
+      color: #FFFFFF;
+    }
+
+    /* ---------- Fabric & Materiality Deep Dive ---------- */
+    .fabric-box {
+      background: #FAF8F4;
+      border: 1px solid #E4E0D5;
+      border-radius: 10px;
+      padding: 28px 30px;
+      margin: 44px 0;
+    }
+    .fabric-box h3 {
+      margin-top: 0;
+      font-family: var(--font-display);
+      font-size: 22px;
+      font-weight: 700;
+      color: var(--ink);
+      margin-bottom: 8px;
+    }
+    .fabric-composition-badge {
+      display: inline-block;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--accent);
+      background: #ECE6D9;
+      padding: 4px 12px;
+      border-radius: 4px;
+      margin-bottom: 20px;
+    }
+    .fabric-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 18px;
+    }
+    .fabric-item {
+      background: #FFFFFF;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px 18px;
+    }
+    .fabric-item-title {
+      font-size: 13.5px;
+      font-weight: 600;
+      color: var(--ink);
+      margin-bottom: 4px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .fabric-item-desc {
+      font-size: 13px;
+      color: var(--ink-soft);
+      line-height: 1.55;
+      margin: 0;
+    }
+
+    /* ---------- Pros & Cons 2-Column Grid ---------- */
+    .pros-cons-container {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+      margin: 40px 0;
+    }
+    .pros-card {
+      background: var(--green-bg);
+      border: 1px solid var(--green-border);
+      border-radius: 10px;
+      padding: 22px 24px;
+    }
+    .cons-card {
+      background: var(--amber-bg);
+      border: 1px solid var(--amber-border);
+      border-radius: 10px;
+      padding: 22px 24px;
+    }
+    .pros-card h4 {
+      color: var(--green-dark);
+      font-size: 15.5px;
+      font-weight: 700;
+      margin: 0 0 14px 0;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .cons-card h4 {
+      color: var(--amber-dark);
+      font-size: 15.5px;
+      font-weight: 700;
+      margin: 0 0 14px 0;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .pros-list, .cons-list {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+    }
+    .pros-list li, .cons-list li {
+      font-size: 13.5px;
+      line-height: 1.55;
+      margin-bottom: 10px;
+      position: relative;
+      padding-left: 20px;
+    }
+    .pros-list li { color: #064E3B; }
+    .cons-list li { color: #78350F; }
+    .pros-list li::before {
+      content: "✓";
+      position: absolute;
+      left: 0;
+      font-weight: 700;
+      color: #059669;
+    }
+    .cons-list li::before {
+      content: "•";
+      position: absolute;
+      left: 2px;
+      font-weight: 700;
+      font-size: 16px;
+      color: #D97706;
+    }
+
+    /* ---------- Buyer Persona Matching ---------- */
+    .persona-container {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+      margin: 40px 0;
+    }
+    .persona-card {
+      background: #FFFFFF;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 22px 24px;
+    }
+    .persona-card.buy-card { border-top: 3px solid #059669; }
+    .persona-card.skip-card { border-top: 3px solid var(--ink-muted); }
+    .persona-card h4 {
+      font-size: 15px;
+      font-weight: 700;
+      margin: 0 0 12px 0;
+      color: var(--ink);
+    }
+    .persona-list {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+      font-size: 13.5px;
+      color: var(--ink-soft);
+    }
+    .persona-list li {
+      margin-bottom: 8px;
+      line-height: 1.5;
+      padding-left: 18px;
+      position: relative;
+    }
+    .buy-card .persona-list li::before { content: "👍"; position: absolute; left: 0; font-size: 11px; }
+    .skip-card .persona-list li::before { content: "ℹ️"; position: absolute; left: 0; font-size: 11px; }
+
+    /* ---------- Objection FAQ Accordion ---------- */
+    .faq-section {
+      margin: 44px 0;
+    }
+    .faq-section h3 {
+      font-family: var(--font-display);
+      font-size: 24px;
+      font-weight: 700;
+      color: var(--ink);
+      margin-bottom: 20px;
+    }
+    details.faq-item {
+      background: #FAF9F6;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px 20px;
+      margin-bottom: 12px;
+      transition: all 0.2s ease;
+    }
+    details.faq-item[open] {
+      background: #FFFFFF;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.03);
+    }
+    details.faq-item summary {
+      font-weight: 600;
+      font-size: 15px;
+      color: var(--ink);
+      cursor: pointer;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      list-style: none;
+    }
+    details.faq-item summary::-webkit-details-marker { display: none; }
+    details.faq-item p {
+      margin: 14px 0 4px 0;
+      font-size: 14px;
+      color: var(--ink-soft);
+      line-height: 1.6;
+    }
+
+    /* GAP 4 FIX: Content Cluster & Internal Linking Hub Section */
+    .cluster-section {
+      margin: 48px 0 24px 0;
+      border-top: 1px solid var(--border);
+      padding-top: 36px;
+    }
+    .cluster-section h3 {
+      font-family: var(--font-display);
+      font-size: 22px;
+      font-weight: 700;
+      color: var(--ink);
+      margin: 0 0 16px 0;
+    }
+    .cluster-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 16px;
+    }
+    .cluster-card {
+      background: #FAF9F6;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px;
+      display: block;
+      transition: all 0.2s ease;
+    }
+    .cluster-card:hover {
+      background: #FFFFFF;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.04);
+      transform: translateY(-2px);
+      border-color: var(--border-dark);
+    }
+    .cluster-cat {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--accent);
+      margin-bottom: 6px;
+    }
+    .cluster-title {
+      font-size: 13.5px;
+      font-weight: 600;
+      color: var(--ink);
+      line-height: 1.45;
+      margin: 0 0 8px 0;
+    }
+    .cluster-arrow {
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--accent);
+    }
+
+    /* ---------- Final Verdict Box ---------- */
+    .final-verdict-box {
+      background: #191816;
+      color: #FFFFFF;
+      border-radius: 12px;
+      padding: 34px 36px;
+      margin: 48px 0 24px 0;
+      text-align: center;
+    }
+    .final-verdict-box h3 {
+      font-family: var(--font-display);
+      font-size: 26px;
+      font-weight: 700;
+      color: #FFFFFF;
+      margin: 0 0 12px 0;
+    }
+    .final-verdict-box p {
+      font-size: 15.5px;
+      line-height: 1.65;
+      color: #CFCBC0;
+      max-width: 640px;
+      margin: 0 auto 24px auto;
+    }
+    .final-cta-btn {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      background: #FFFFFF;
+      color: #141311;
+      font-weight: 700;
+      font-size: 16px;
+      padding: 16px 36px;
+      border-radius: 8px;
+      transition: all 0.2s ease;
+    }
+    .final-cta-btn:hover {
+      background: #F3EEE3;
+      transform: translateY(-2px);
+    }
+
+    /* Compliance Disclosure Footer */
+    .disclosure-text {
+      font-size: 11.5px;
+      color: var(--ink-muted);
+      line-height: 1.5;
+      margin-top: 24px;
+      text-align: center;
+    }
+
+    /* ---------- Sidebar ---------- */
+    aside { display: block; }
+    .sidebar-sticky {
+      position: sticky;
+      top: 84px;
+      display: flex;
+      flex-direction: column;
+      gap: 24px;
+    }
+    .sidebar-widget {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 24px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.02);
+    }
+    .sidebar-widget h4 {
+      font-family: var(--font-display);
+      font-size: 18px;
+      font-weight: 700;
+      color: var(--ink);
+      margin: 0 0 14px 0;
+    }
+    .sidebar-prod-img {
+      border-radius: 8px;
+      overflow: hidden;
+      margin-bottom: 14px;
+    }
+    .sidebar-btn {
+      display: block;
+      width: 100%;
+      text-align: center;
+      background: var(--btn-bg);
+      color: var(--btn-text);
+      font-weight: 600;
+      font-size: 14px;
+      padding: 12px 16px;
+      border-radius: 6px;
+      margin-top: 14px;
+    }
+
+    /* ---------- Sticky Mobile Footer Bar ---------- */
+    .mobile-sticky-bar {
+      display: none;
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      right: 0;
+      z-index: 999;
+      background: rgba(255, 255, 255, 0.98);
+      backdrop-filter: blur(12px);
+      border-top: 1px solid var(--border);
+      padding: 10px 16px;
+      box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.08);
+    }
+    .mobile-sticky-inner {
+      max-width: var(--max);
+      margin: 0 auto;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .mobile-sticky-thumb {
+      width: 42px;
+      height: 42px;
+      border-radius: 6px;
+      object-fit: cover;
+    }
+    .mobile-sticky-info {
+      flex: 1;
+      min-width: 0;
+    }
+    .mobile-sticky-name {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--ink);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .mobile-sticky-price {
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--ink);
+    }
+    .mobile-sticky-btn {
+      background: var(--btn-bg);
+      color: var(--btn-text);
+      font-size: 13px;
+      font-weight: 600;
+      padding: 9px 16px;
+      border-radius: 6px;
+      white-space: nowrap;
+    }
+
+    /* ---------- Responsive Media Queries ---------- */
+    @media (max-width: 960px) {
+      .content-grid {
+        grid-template-columns: 1fr;
+        padding: 0 16px;
+        margin-top: 20px;
+      }
+      aside { display: none; }
+      .post-card {
+        padding: 28px 20px;
+      }
+      .post-title {
+        font-size: 29px;
+      }
+      .post-subtitle {
+        font-size: 16.5px;
+      }
+      .comparison-grid, .cluster-grid, .fabric-grid, .pros-cons-container, .persona-container {
+        grid-template-columns: 1fr;
+      }
+      .mobile-sticky-bar {
+        display: block;
+      }
+      body {
+        padding-bottom: 70px;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- ================= SITE MASTHEAD ================= -->
+  <header class="site-header">
+    <div class="header-row">
+      <a href="/" class="header-logo">SmartPickr</a>
+      <span class="header-badge">Verified Try-On Wear Test</span>
+    </div>
+  </header>
+
+  <!-- ================= MAIN CONTENT GRID ================= -->
+  <div class="content-grid">
+
+    <!-- ---------- MAIN ARTICLE COLUMN ---------- -->
+    <main>
+      <article class="post-card">
+        
+        <!-- Breadcrumb & Category Pillar Link (GAP 4 Internal Link) -->
+        <div class="breadcrumbs">
+          <a href="/">SmartPickr</a> <span>/</span> 
+          <a href="/#shop">{{ product_data.get('category', 'Fashion & Style') }}</a> <span>/</span> 
+          <span>30-Day Wear Test</span>
+        </div>
+
+        <!-- Article Headline & Subheadline (GAP 2 'I Tested' UGC Hook) -->
+        <h1 class="post-title">{{ headline }}</h1>
+        <p class="post-subtitle">{{ subheadline }}</p>
+
+        <!-- Author & Reading Time -->
+        <div class="author-meta">
+          <div class="author-avatar">{{ (author_name or 'Elena Vance')[:1] }}</div>
+          <div class="author-details">
+            <span class="author-name">{{ author_name or 'Elena Vance' }}</span>
+            <span class="author-role">{{ author_title or 'Fashion & Lifestyle Wear-Tester' }} · {{ reading_time or '4 min read' }} · Updated for {{ year }}</span>
+          </div>
+        </div>
+
+        <!-- GAP 3 FIX: Mandatory Top FTC Disclosure Notice (Placed BEFORE any affiliate CTA) -->
+        <div class="ftc-top-banner">
+          <span class="ftc-badge">FTC Disclosure</span>
+          <p>This review contains affiliate links. When you purchase through our links, SmartPickr earns a small commission from Amazon at zero extra cost to you. All wear-tests and evaluations are 100% independent.</p>
+        </div>
+
+        <!-- Above-The-Fold Hero Image -->
+        {% if hero_look %}
+        <div class="hero-frame">
+          <img src="{{ hero_look.data_uri }}" alt="{{ product_name }} - {{ hero_look.angle_badge }}" loading="eager" />
+          <div class="hero-tag">{{ hero_look.angle_badge }}</div>
+        </div>
+        {% endif %}
+
+        <!-- Executive Verdict & Quick Answer Buy Box -->
+        <div class="verdict-box">
+          <div class="verdict-top-row">
+            <span class="scenario-badge">⭐ {{ quick_verdict.scenario_badge if quick_verdict else "Editor's Choice • 30-Day Winner" }}</span>
+            {% if testing_badge %}
+            <span class="testing-time-badge">{{ testing_badge }}</span>
+            {% endif %}
+            <div class="rating-pill">
+              <span>★ ★ ★ ★ ★</span>
+              <span>{{ quick_verdict.star_rating if quick_verdict else '4.9' }} / 5.0 ({{ quick_verdict.rating_count if quick_verdict else '1,420+ Looks' }})</span>
+            </div>
+          </div>
+
+          <div class="price-row">
+            <div>
+              <div style="font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-muted); margin-bottom: 2px;">Verified Amazon Price</div>
+              <span class="price-amount">{{ price_display }}</span>
+              <span class="prime-badge">Prime 2-Day</span>
+            </div>
+            {% if brand %}
+            <div style="text-align: right;">
+              <div style="font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-muted);">Tested Brand</div>
+              <div style="font-family: var(--font-display); font-size: 18px; font-weight: 600; color: var(--ink);">{{ brand }}</div>
+            </div>
+            {% endif %}
+          </div>
+
+          <!-- Primary CTA Button (Above the Fold) -->
+          <a href="{{ affiliate_url }}" target="_blank" rel="nofollow sponsored noopener" class="btn-cta-primary">
+            <span>{{ staged_ctas.hero_cta if staged_ctas else 'Check Amazon Price & In-Stock Deals' }}</span>
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+          </a>
+
+          <div class="trust-chips">
+            <span>✓ Direct Amazon Fulfillment</span>
+            <span>•</span>
+            <span>✓ 30-Day Free Returns</span>
+            <span>•</span>
+            <span>✓ 100% Authentic Guaranteed</span>
+          </div>
+        </div>
+
+        <!-- GAP 1 FIX: Above-The-Fold Quick Comparison Matrix -->
+        {% if comparison_matrix and comparison_matrix.tiers %}
+        <div class="comparison-section">
+          <h3>{{ comparison_matrix.title or 'Quick Comparison: How It Stacks Up' }}</h3>
+          <div class="comparison-grid">
+            {% for item in comparison_matrix.tiers %}
+            <div class="comp-card {% if item.is_featured %}featured-card{% endif %}">
+              <div>
+                <span class="comp-badge">{{ item.badge }} • {{ item.tier }}</span>
+                <div class="comp-name">{{ item.name }}</div>
+                <div class="comp-score">★ Score: {{ item.score }}</div>
+                <div class="comp-details">
+                  <div><strong>Feel:</strong> {{ item.fabric_feel }}</div>
+                  <div><strong>Opacity:</strong> {{ item.squat_opacity }}</div>
+                  <div style="margin-top: 4px; font-style: italic;">"{{ item.verdict }}"</div>
+                </div>
+              </div>
+              <div class="comp-price-row">
+                <span class="comp-price">{{ item.price }}</span>
+                {% if item.is_featured %}
+                <a href="{{ affiliate_url }}" target="_blank" rel="nofollow sponsored noopener" class="comp-btn">
+                  Check Amazon →
+                </a>
+                {% else %}
+                <span style="font-size: 11.5px; color: var(--ink-muted);">Alternative</span>
+                {% endif %}
+              </div>
+            </div>
+            {% endfor %}
+          </div>
+        </div>
+        {% endif %}
+
+        <!-- Editorial Prose Body -->
+        <div class="editorial-prose">
+          
+          <!-- Story Intro -->
+          <p>{{ story_intro }}</p>
+
+          <!-- GAP 2 FIX: UGC 5-Stage Experiential Testing Narrative -->
+          {% if ugc_narrative %}
+          <h2>{{ ugc_narrative.friction_title or 'The Everyday Struggle: Why Most Alternatives Failed Me' }}</h2>
+          <p>{{ ugc_narrative.friction_body }}</p>
+          
+          {% if ugc_narrative.failed_solutions %}
+          <p>{{ ugc_narrative.failed_solutions }}</p>
+          {% endif %}
+
+          {% if ugc_narrative.discovery_moment %}
+          <p>{{ ugc_narrative.discovery_moment }}</p>
+          {% endif %}
+
+          {% if ugc_narrative.testing_log_entries %}
+          <div class="testing-log-box">
+            <h3>{{ ugc_narrative.testing_log_title or 'The 30-Day Wear & Wash Log' }}</h3>
+            {% for log in ugc_narrative.testing_log_entries %}
+            <div class="log-item">
+              <div class="log-phase">{{ log.phase }}</div>
+              <p class="log-desc">{{ log.desc }}</p>
+            </div>
+            {% endfor %}
+          </div>
+          {% endif %}
+          {% endif %}
+
+          <!-- Pullquote Verdict -->
+          {% if quick_verdict and quick_verdict.why_worth_it %}
+          <blockquote class="editorial-quote">
+            "{{ quick_verdict.why_worth_it }}"
+            <cite>— Best For: {{ quick_verdict.best_for }}</cite>
+          </blockquote>
+          {% endif %}
+
+          <!-- ================= SEQUENTIAL MULTI-LOOK BREAKDOWN ================= -->
+          <h2>Real-World Styling & Multi-Look Try-On Test</h2>
+          <p>To understand how this piece performs beyond studio staging, we broke down each candidate styling look across real-world settings:</p>
+
+          {% for look in looks %}
+          <div class="look-section">
+            <div class="look-header">
+              <span class="look-badge">{{ look.angle_badge }}</span>
+              <h3 class="look-title">{{ look.look_title }}</h3>
+              <p class="look-subtitle">{{ look.look_subtitle }}</p>
+            </div>
+
+            <!-- Look Lifestyle Photo -->
+            <div class="look-image-card">
+              <img src="{{ look.data_uri }}" alt="{{ product_name }} - {{ look.look_title }}" loading="lazy" />
+              <div class="look-angle-chip">{{ look.angle_badge }}</div>
+            </div>
+
+            <!-- Look Try-On Narrative -->
+            <p>{{ look.look_story }}</p>
+
+            <!-- Styling Advice Callout -->
+            <div class="styling-box">
+              <div class="styling-box-icon">👗</div>
+              <div class="styling-box-text">
+                <strong>Styling Recommendation:</strong> {{ look.styling_advice }}
+              </div>
+            </div>
+
+            <!-- Contextual Inline CTA -->
+            <a href="{{ affiliate_url }}" target="_blank" rel="nofollow sponsored noopener" class="btn-look-cta">
+              <span>{{ look.inline_cta or 'Shop This Look on Amazon' }}</span>
+              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+            </a>
+          </div>
+          {% endfor %}
+
+          <!-- ================= TACTILE MATERIALITY & FABRIC BREAKDOWN ================= -->
+          {% if fabric_deep_dive %}
+          <div class="fabric-box">
+            <h3>{{ fabric_deep_dive.title or 'Tactile Materiality & Fabric Breakdown' }}</h3>
+            <span class="fabric-composition-badge">Fabric Blend: {{ fabric_deep_dive.composition or 'Premium Dual-Knit Blend' }}</span>
+
+            <div class="fabric-grid">
+              <div class="fabric-item">
+                <div class="fabric-item-title">🧵 Hand-Feel & Skin Contact</div>
+                <p class="fabric-item-desc">{{ fabric_deep_dive.hand_feel }}</p>
+              </div>
+              <div class="fabric-item">
+                <div class="fabric-item-title">⚡ Omni-Stretch & Recovery</div>
+                <p class="fabric-item-desc">{{ fabric_deep_dive.stretch_recovery }}</p>
+              </div>
+              <div class="fabric-item">
+                <div class="fabric-item-title">🛡️ Opacity & Squat-Proof Test</div>
+                <p class="fabric-item-desc">{{ fabric_deep_dive.opacity_test }}</p>
+              </div>
+              <div class="fabric-item">
+                <div class="fabric-item-title">🧼 Wash Resilience & Longevity</div>
+                <p class="fabric-item-desc">{{ fabric_deep_dive.wash_longevity }}</p>
+              </div>
+            </div>
+          </div>
+          {% endif %}
+
+          <!-- ================= PROS & CONS 2-COLUMN GRID ================= -->
+          {% if pros_cons %}
+          <h2>Honest Assessment: Strengths vs. Considerations</h2>
+          <div class="pros-cons-container">
+            <div class="pros-card">
+              <h4>What We Loved</h4>
+              <ul class="pros-list">
+                {% for pro in pros_cons.pros %}
+                <li>{{ pro }}</li>
+                {% endfor %}
+              </ul>
+            </div>
+
+            <div class="cons-card">
+              <h4>Things to Consider</h4>
+              <ul class="cons-list">
+                {% for con in pros_cons.cons %}
+                <li>{{ con }}</li>
+                {% endfor %}
+              </ul>
+            </div>
+          </div>
+          {% endif %}
+
+          <!-- ================= BUYER PERSONA MATCHING ================= -->
+          {% if buyer_persona %}
+          <h2>Who Should Buy This (and Who Should Skip)</h2>
+          <div class="persona-container">
+            <div class="persona-card buy-card">
+              <h4>✅ Perfect For You If:</h4>
+              <ul class="persona-list">
+                {% for item in buyer_persona.who_should_buy %}
+                <li>{{ item }}</li>
+                {% endfor %}
+              </ul>
+            </div>
+
+            <div class="persona-card skip-card">
+              <h4>⚠️ Consider Alternatives If:</h4>
+              <ul class="persona-list">
+                {% for item in buyer_persona.who_should_skip %}
+                <li>{{ item }}</li>
+                {% endfor %}
+              </ul>
+            </div>
+          </div>
+          {% endif %}
+
+          <!-- ================= OBJECTION FAQ ACCORDION ================= -->
+          {% if objections_faq %}
+          <div class="faq-section">
+            <h3>Frequently Asked Questions</h3>
+            {% for faq in objections_faq %}
+            <details class="faq-item">
+              <summary>
+                <span>{{ faq.question }}</span>
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+              </summary>
+              <p>{{ faq.answer }}</p>
+            </details>
+            {% endfor %}
+          </div>
+          {% endif %}
+
+          <!-- GAP 4 FIX: Content Cluster / Internal Linking Hub -->
+          {% if related_lookbooks %}
+          <div class="cluster-section">
+            <h3>More Curated Wear-Tests & Style Guides</h3>
+            <div class="cluster-grid">
+              {% for rel in related_lookbooks %}
+              <a href="{{ rel.local_url or rel.url }}" class="cluster-card">
+                <div class="cluster-cat">{{ rel.category }}</div>
+                <div class="cluster-title">{{ rel.title }}</div>
+                <span class="cluster-arrow">Read Wear-Test →</span>
+              </a>
+              {% endfor %}
+            </div>
+          </div>
+          {% endif %}
+
+          <!-- ================= FINAL VERDICT BOX ================= -->
+          <div class="final-verdict-box">
+            <h3>The Editorial Verdict</h3>
+            <p>{{ final_verdict.summary if final_verdict else "An exceptional wardrobe workhorse that balances luxury-grade drape with everyday comfort. It easily outperforms alternative items at double the price." }}</p>
+            
+            <a href="{{ affiliate_url }}" target="_blank" rel="nofollow sponsored noopener" class="final-cta-btn">
+              <span>{{ staged_ctas.bottom_cta if staged_ctas else 'Get the Look on Amazon (Prime Fast Delivery)' }}</span>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+            </a>
+          </div>
+
+          <!-- Secondary Bottom FTC Transparency Statement -->
+          <p class="disclosure-text">
+            <strong>FTC Transparency:</strong> As an Amazon Associate, SmartPickr earns from qualifying purchases made through links on this page at no extra cost to you. Pricing and stock availability are verified and subject to change.
+          </p>
+
+        </div>
+      </article>
+    </main>
+
+    <!-- ---------- DESKTOP SIDEBAR ---------- -->
+    <aside>
+      <div class="sidebar-sticky">
+        
+        <!-- Quick Buy Widget -->
+        <div class="sidebar-widget">
+          <h4>Curated In-Stock Deal</h4>
+          {% if hero_look %}
+          <div class="sidebar-prod-img">
+            <img src="{{ hero_look.data_uri }}" alt="{{ product_name }}" style="width:100%; border-radius:6px;" />
+          </div>
+          {% endif %}
+          <div style="font-weight:600; font-size:15px; margin-bottom:4px;">{{ product_name }}</div>
+          <div style="color:var(--ink-muted); font-size:12.5px; margin-bottom:12px;">{{ brand }}</div>
+          <div style="font-family:var(--font-display); font-size:24px; font-weight:700; margin-bottom:14px;">{{ price_display }}</div>
+          <a href="{{ affiliate_url }}" target="_blank" rel="nofollow sponsored noopener" class="sidebar-btn">
+            View on Amazon →
+          </a>
+        </div>
+
+        <!-- Sidebar Related Wear-Tests (GAP 4 Internal Linking) -->
+        {% if related_lookbooks %}
+        <div class="sidebar-widget" style="background:#FAF9F6;">
+          <h4 style="font-size:15px; margin-bottom:12px;">Related Reviews</h4>
+          {% for rel in related_lookbooks %}
+          <div style="margin-bottom:12px; padding-bottom:10px; border-bottom:1px solid var(--border);">
+            <div style="font-size:10.5px; font-weight:700; text-transform:uppercase; color:var(--accent);">{{ rel.category }}</div>
+            <a href="{{ rel.local_url or rel.url }}" style="font-size:13px; font-weight:600; color:var(--ink); line-height:1.4; display:block;">
+              {{ rel.title }}
+            </a>
+          </div>
+          {% endfor %}
+        </div>
+        {% endif %}
+
+        <!-- Editorial Guarantee Widget -->
+        <div class="sidebar-widget" style="background:#FAF9F6;">
+          <h4 style="font-size:15px; margin-bottom:8px;">Editorial Guarantee</h4>
+          <p style="font-size:13px; color:var(--ink-soft); line-height:1.55; margin:0;">
+            Every piece featured on SmartPickr undergoes authentic try-on evaluation to ensure accurate sizing, material quality, and real-world durability.
+          </p>
+        </div>
+
+      </div>
+    </aside>
+
+  </div>
+
+  <!-- ================= STICKY MOBILE FOOTER BAR ================= -->
+  <div class="mobile-sticky-bar">
+    <div class="mobile-sticky-inner">
+      {% if hero_look %}
+      <img src="{{ hero_look.data_uri }}" alt="{{ product_name }}" class="mobile-sticky-thumb" />
+      {% endif %}
+      <div class="mobile-sticky-info">
+        <div class="mobile-sticky-name">{{ product_name }}</div>
+        <div class="mobile-sticky-price">{{ price_display }}</div>
+      </div>
+      <a href="{{ affiliate_url }}" target="_blank" rel="nofollow sponsored noopener" class="mobile-sticky-btn">
+        {{ staged_ctas.sticky_cta if staged_ctas else 'Check Deal' }} →
+      </a>
+    </div>
+  </div>
+
+</body>
+</html>

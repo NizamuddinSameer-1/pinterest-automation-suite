@@ -1,0 +1,63 @@
+# ── Secrets ────────────────────────────────────────
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+
+# ── Runtime data, browser profiles, generated media ─
+# data/ holds pre.db, generated outputs and two logged-in Chromium
+# profiles (Google Flow + Pinterest). None of it belongs in git.
+data/
+!data/.gitkeep
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+captured_flow_session.json
+scheduled_pins.json
+
+# ── Python ─────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ── Node / frontend ────────────────────────────────
+node_modules/
+frontend/node_modules/
+frontend/dist/
+dist/
+build/
+*.local
+.vite/
+
+# ── Obsidian workspace state (keep the notes, drop the UI state) ──
+vault/.obsidian/workspace.json
+vault/.obsidian/workspace-mobile.json
+vault/.trash/
+
+# ── OS / editor noise ──────────────────────────────
+Thumbs.db
+desktop.ini
+.DS_Store
+*.swp
+.idea/
+.vscode/
+
+# ── Stray media in the project root ────────────────
+/*.jpg
+/*.jpeg
+/*.png
+*.docx
+vault_backup_*.zip
+.workbuddy-ai/
+*.mjs.timestamp-*
+frontend/vite.config.ts.timestamp-*
+.claude/
+vault/02 - Bugs & Issues/_Archive - Auto Bugs/

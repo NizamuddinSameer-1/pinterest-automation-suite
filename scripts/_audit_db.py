@@ -1,0 +1,15 @@
+import sqlite3
+c = sqlite3.connect('data/pre.db')
+for t in ['campaigns','references','products','jobs','job_outputs','pin_drafts','critiques','prompt_versions','visual_dnas','reference_analyses']:
+    try: print(t, c.execute(f'select count(*) from {t}').fetchone()[0])
+    except Exception as e: print(t, 'ERR', e)
+print('--- job states ---')
+for r in c.execute('select current_state, count(*) from jobs group by 1'): print(r)
+print('--- pin statuses ---')
+for r in c.execute('select status, count(*) from pin_drafts group by 1'): print(r)
+print('--- products missing affiliate_url ---')
+print(c.execute("select count(*) from products where affiliate_url is null or affiliate_url=''").fetchone()[0])
+print('--- distinct destination hosts ---')
+for r in c.execute("select distinct substr(destination_url,1,70) from pin_drafts limit 12"): print(r[0])
+print('--- affiliate urls sample ---')
+for r in c.execute("select substr(affiliate_url,1,90) from products limit 8"): print(r[0])

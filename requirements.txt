@@ -1,0 +1,36 @@
+# Core
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+pydantic==2.9.0
+pydantic-settings==2.5.0
+
+# Database
+sqlalchemy==2.0.35
+aiosqlite==0.20.0
+
+# HTTP client (for LLM API calls)
+httpx==0.27.2
+
+# Templating & imaging (article_generator, anti_ai_processor, flow_library, llm provider)
+# and Amazon page scraping (amazon_paapi). Imported at module level — without these
+# a fresh `pip install -r requirements.txt` cannot boot the app.
+jinja2>=3.1.0
+Pillow>=10.0.0
+beautifulsoup4>=4.12.0
+
+# File handling
+python-multipart==0.0.9
+python-dotenv==1.0.1
+
+# Browser automation — Google Flow generation (app/services/flow_automator.py)
+# and Pinterest publishing (app/services/pinterest_publisher.py). These are not
+# optional extras: without playwright the app imports fine but every generate
+# and publish call fails at runtime. After installing, run:
+#   python -m playwright install chromium
+playwright>=1.47.0
+
+# NOTE: the scheduler in app/services/scheduler.py is a plain asyncio loop on
+# purpose, so no APScheduler dependency is needed.
+
+# Utilities
+uuid7==0.1.0
