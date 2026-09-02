@@ -172,6 +172,9 @@ class PromptVersion(Base):
     prompt_text: Mapped[str] = mapped_column(Text, nullable=False)
     is_rework: Mapped[bool] = mapped_column(Boolean, default=False)
     rework_instruction: Mapped[str | None] = mapped_column(Text)
+    concept_index: Mapped[int | None] = mapped_column(Integer)
+    concept_json: Mapped[str | None] = mapped_column(Text)
+    modules_json: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
     # Relationships

@@ -28,6 +28,7 @@ import logging
 from typing import Any
 from uuid import uuid4
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -109,12 +110,24 @@ async def _record_outputs(
     except Exception as e:
         logger.warning("Job %s: studio postprocessing note: %s", job.id, e)
 
+    # If job has multiple prompt versions (e.g. 1 per concept), link each output to its corresponding PV
+    pv_result = await db.execute(
+        select(PromptVersion).where(PromptVersion.job_id == job.id).order_by(PromptVersion.version.asc())
+    )
+    pvs = list(pv_result.scalars().all())
+
     outputs: list[JobOutput] = []
-    for path in image_paths:
+    for idx, path in enumerate(image_paths):
+        assigned_pv_id = prompt_version_id
+        if pvs and len(pvs) > 1:
+            assigned_pv_id = pvs[min(idx, len(pvs) - 1)].id
+        elif pvs and not assigned_pv_id:
+            assigned_pv_id = pvs[0].id
+
         rec = JobOutput(
             id=str(uuid4())[:8],
             job_id=job.id,
-            prompt_version_id=prompt_version_id,
+            prompt_version_id=assigned_pv_id,
             # Stored exactly as produced (normalised, never re-derived from an
             # index): the file on disk is the source of truth.
             image_path=store_relative(path),

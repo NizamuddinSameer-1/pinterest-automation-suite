@@ -79,13 +79,25 @@ async def main(job_id: str, backend: str, count: int) -> int:
         await _mark_failed(job_id, "Background run started without a compiled prompt on disk.")
         return 1
 
-    prompt = prompt_file.read_text(encoding="utf-8").strip()
+    prompts: list[str] = []
+    prompts_file = output_dir / "prompts.json"
+    if prompts_file.exists():
+        try:
+            loaded = json.loads(prompts_file.read_text(encoding="utf-8"))
+            if isinstance(loaded, list):
+                prompts = [str(p) for p in loaded if p]
+        except Exception:
+            prompts = []
+
+    prompt = prompt_file.read_text(encoding="utf-8").strip() if prompt_file.exists() else ""
+    if not prompt and prompts:
+        prompt = prompts[0]
     if not prompt:
         write_status("error", error="prompt.txt is empty; refusing to generate from nothing.")
         await _mark_failed(job_id, "Compiled prompt on disk was empty.")
         return 1
 
-    # Look for reference image on disk or in DB
+    # Look for reference/product conditioning image on disk or in DB
     ref_image_path: str | None = None
     ref_file = output_dir / "ref_image_path.txt"
     if ref_file.exists():
@@ -95,18 +107,24 @@ async def main(job_id: str, backend: str, count: int) -> int:
     if not ref_image_path:
         try:
             from app.database import async_session
-            from app.models.models import Job, Reference
+            from app.models.models import Job, Product, Reference
 
             async with async_session() as db:
                 job = await db.get(Job, job_id)
-                if job and job.reference_id:
-                    ref = await db.get(Reference, job.reference_id)
-                    if ref and ref.image_path and Path(ref.image_path).exists():
-                        ref_image_path = str(ref.image_path)
+                if job:
+                    # Prefer product image for conditioning if available
+                    if job.product_id:
+                        prod = await db.get(Product, job.product_id)
+                        if prod and prod.product_image_path and Path(prod.product_image_path).exists():
+                            ref_image_path = str(prod.product_image_path)
+                    if not ref_image_path and job.reference_id:
+                        ref = await db.get(Reference, job.reference_id)
+                        if ref and ref.image_path and Path(ref.image_path).exists():
+                            ref_image_path = str(ref.image_path)
         except Exception:
             pass
 
-    print(f"[BG] Job {job_id}: backend={backend} count={count} ref_image={ref_image_path}")
+    print(f"[BG] Job {job_id}: backend={backend} count={count} ref_image={ref_image_path} prompts={len(prompts)}")
     print(f"[BG] Prompt ({len(prompt)} chars): {prompt[:120]}...")
     write_status("generating", requested_count=count, message=f"Running {backend}...")
 
@@ -122,6 +140,7 @@ async def main(job_id: str, backend: str, count: int) -> int:
                 count=count,
                 backend=backend,
                 reference_image=ref_image_path,
+                prompts=prompts,
             ),
             timeout=hard_timeout,
         )

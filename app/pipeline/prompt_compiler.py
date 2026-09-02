@@ -29,7 +29,7 @@ from app.pipeline.product_taxonomy import (
     resolve_class,
     subject_line,
 )
-from app.pipeline.prompt_modules import get_relevant_modules
+from app.pipeline.prompt_modules import get_relevant_module_items, get_relevant_modules
 
 logger = logging.getLogger("pre.pipeline.prompt_compiler")
 
@@ -250,6 +250,7 @@ class CompileResult:
     prompt: str
     warnings: list[CompileWarning] = field(default_factory=list)
     is_valid: bool = True
+    module_keys: list[str] = field(default_factory=list)
 
 
 def compile_prompt(
@@ -408,8 +409,12 @@ def compile_prompt(
     if human != "none":
         camera_block += f" Human presence is {human} with natural, unposed body posture and authentic skin texture."
 
+    measured_facts = visual_dna.get("measured_facts") or {}
+    palette = measured_facts.get("dominant_palette") or []
+    palette_text = f" Grounded environmental tones: {', '.join(palette[:4])}." if palette else ""
+
     lighting_block = (
-        f"Lighting: Authentic {light_source} lighting with {warmth} color balance and {contrast} contrast. "
+        f"Lighting: Authentic {light_source} lighting with {warmth} color balance and {contrast} contrast.{palette_text} "
         f"Realistic light bounce and natural soft shadows. Optical specs: {sharpness}, {noise}, {hdr}, "
         "natural focal falloff without artificial digital blur or fake studio rim lights."
     )
@@ -443,8 +448,11 @@ def compile_prompt(
             logger.warning("Commerce module injection skipped: %s", e)
 
     # ── Dynamic Realism Modules — inject viral-pin micro-triggers
+    selected_module_keys: list[str] = []
     try:
-        realism_modules = get_relevant_modules(scene, klass, visual_dna)
+        module_items = get_relevant_module_items(scene, klass, visual_dna)
+        selected_module_keys = [k for k, _ in module_items]
+        realism_modules = [text for _, text in module_items]
         if realism_modules:
             sections.append(
                 "REALISM MICRO-TRIGGERS — concrete physical details to enforce authenticity:\n"
@@ -467,7 +475,12 @@ def compile_prompt(
             f"Auto-stripped banned keywords from the inputs: {', '.join(sorted(stripped))}"
         ))
 
-    return CompileResult(prompt=prompt.strip(), warnings=warnings, is_valid=True)
+    return CompileResult(
+        prompt=prompt.strip(),
+        warnings=warnings,
+        is_valid=True,
+        module_keys=selected_module_keys,
+    )
 
 
 def create_job_package(

@@ -1021,21 +1021,42 @@ def get_module(key: str) -> str:
     return MODULES.get(key, "")
 
 
-def get_relevant_modules(scene: dict, klass: ProductClass, visual_dna: dict | None = None) -> list[str]:
+CLEAN_PRODUCT_CLASSES = frozenset({
+    "tech", "kitchen", "skincare", "fragrance", "stationery", "storage", "glassware",
+})
+
+MESSY_UGC_MODULES = frozenset({
+    "WRINKLED_LINEN_DUVET",
+    "PILLOW_INDENT_SHADOWS",
+    "LAP_POV_DOWNWARD_45",
+    "SMALL_BEDROOM_DENSITY",
+    "BED_LAP_EXTRA_001",
+    "BED_LAP_EXTRA_005",
+    "TOSSED_THROW_TEXTURE",
+    "SHOPPING_CART_WIRE_GRID",
+    "YELLOW_CLEARANCE_TAG",
+    "STORE_CART_HAUL_CLUSTER",
+    "MESSY_ENDCAP_DISPLAY",
+    "SKIN_CUTICLE_OIL_GLOW",
+})
+
+CLEAN_PRODUCT_MODULES = [
+    "RAW_OAK_WOOD_GRAIN",
+    "TABLETOP_EVERYDAY_TILES",
+    "NATURAL_OPTICAL_FALLOFF",
+    "MATERIAL_EXTRA_001",
+    "LIGHT_PHYSICS_001",
+]
+
+
+def get_relevant_module_items(
+    scene: dict,
+    klass: ProductClass,
+    visual_dna: dict | None = None,
+) -> list[tuple[str, str]]:
     """
-    Dynamically select realism modules for this pin.
-
-    Rules mirror the 4 viral UGC blueprints:
-
-      • Human active → skin / cuticle / grip physics
-      • Retail discovery / cart haul → fluorescent aisle + cart grid + price tags
-      • Bedroom / lap POV / flat_lay → wrinkled linen + cords + pillow indents
-      • Mirror POV → phone blocking face + hair tuck
-      • Macro / closeup → gel specular + cuticle translucency + chromatic edge
-      • Optics are always lightly added so the render never looks like CGI.
-
-    Returns a deduplicated list of module *texts* (not keys) in insertion order,
-    capped to 10 so the prompt stays focused while still dense.
+    Dynamically select realism modules for this pin, returning (key, text) pairs.
+    Applies per-class filtering to protect clean product photography from messy UGC.
     """
     selected_keys: list[str] = []
 
@@ -1043,47 +1064,59 @@ def get_relevant_modules(scene: dict, klass: ProductClass, visual_dna: dict | No
     fmt = str(scene.get("creative_format") or "")
     framing = str(scene.get("framing") or "")
     location = str(scene.get("location") or "").lower()
+    is_clean_class = klass.key in CLEAN_PRODUCT_CLASSES
 
-    # ── 1. Human tactile physics — any human at all gets skin realism
+    # ── 1. Clean product photography base
+    if is_clean_class:
+        selected_keys += [k for k in CLEAN_PRODUCT_MODULES if k in MODULES]
+
+    # ── 2. Human tactile physics — any human at all gets skin realism
     if human != "none":
-        selected_keys += ["SKIN_CUTICLE_OIL_GLOW", "HAND_PRESSURE_GRIP"]
+        if not is_clean_class:
+            selected_keys += ["SKIN_CUTICLE_OIL_GLOW"]
+        selected_keys += ["HAND_PRESSURE_GRIP"]
         if "hand" in human or "partial" in human:
             selected_keys += ["SKIN_NATURAL_PORES_MATTE", "HAND_CASUAL_REST", "WRIST_TENSION_VEINS"]
-        # add a couple of expanded hand variants for variety
         selected_keys += ["HAND_TACTILE_EXTRA_001", "SKIN_PORE_VARIANT_002"]
 
-    # ── 2. Retail Discovery & Cart Haul blueprint
+    # ── 3. Retail Discovery & Cart Haul blueprint (only if not a clean tech/kitchen product)
     if fmt in ("discovery", "shopping_cart", "product_rack", "unexpected_find"):
-        selected_keys += [
-            "RETAIL_FLUORESCENT_AISLE",
-            "SHOPPING_CART_WIRE_GRID",
-            "RETAIL_WIRE_RACK_HANGERS",
-            "YELLOW_CLEARANCE_TAG",
-            "STORE_AISLE_DEPTH",
-        ]
-        if fmt == "shopping_cart":
-            selected_keys += ["STORE_CART_HAUL_CLUSTER", "MESSY_ENDCAP_DISPLAY", "RETAIL_EXTRA_001"]
-        if fmt == "discovery":
-            selected_keys += ["HAND_REACHING_RACK", "RETAIL_EXTRA_005"]
+        if not is_clean_class:
+            selected_keys += [
+                "RETAIL_FLUORESCENT_AISLE",
+                "SHOPPING_CART_WIRE_GRID",
+                "RETAIL_WIRE_RACK_HANGERS",
+                "YELLOW_CLEARANCE_TAG",
+                "STORE_AISLE_DEPTH",
+            ]
+            if fmt == "shopping_cart":
+                selected_keys += ["STORE_CART_HAUL_CLUSTER", "MESSY_ENDCAP_DISPLAY", "RETAIL_EXTRA_001"]
+            if fmt == "discovery":
+                selected_keys += ["HAND_REACHING_RACK", "RETAIL_EXTRA_005"]
+        else:
+            selected_keys += ["STORE_AISLE_DEPTH", "STORE_WINDOW_REFLECTIONS"]
 
-    # ── 3. Bedroom / Lap POV / Flat-lay blueprint
+    # ── 4. Bedroom / Lap POV / Flat-lay blueprint
     if fmt in ("bedroom_home", "flat_lay", "styled_surface", "collection"):
-        selected_keys += [
-            "WRINKLED_LINEN_DUVET",
-            "LOOSE_POWER_CORD_FLOOR",
-            "PILLOW_INDENT_SHADOWS",
-            "NIGHTSTAND_SURFACE_CLUTTER",
-        ]
-        if fmt == "bedroom_home":
-            selected_keys += ["LAP_POV_DOWNWARD_45", "SMALL_BEDROOM_DENSITY", "BED_LAP_EXTRA_001"]
-        if fmt == "flat_lay":
-            selected_keys += ["RAW_OAK_WOOD_GRAIN", "TOSSED_THROW_TEXTURE", "BED_LAP_EXTRA_005"]
+        if not is_clean_class:
+            selected_keys += [
+                "WRINKLED_LINEN_DUVET",
+                "LOOSE_POWER_CORD_FLOOR",
+                "PILLOW_INDENT_SHADOWS",
+                "NIGHTSTAND_SURFACE_CLUTTER",
+            ]
+            if fmt == "bedroom_home":
+                selected_keys += ["LAP_POV_DOWNWARD_45", "SMALL_BEDROOM_DENSITY", "BED_LAP_EXTRA_001"]
+            if fmt == "flat_lay":
+                selected_keys += ["RAW_OAK_WOOD_GRAIN", "TOSSED_THROW_TEXTURE", "BED_LAP_EXTRA_005"]
+        else:
+            selected_keys += ["RAW_OAK_WOOD_GRAIN", "NIGHTSTAND_SURFACE_CLUTTER"]
 
-    # ── 4. Mirror POV blueprint
+    # ── 5. Mirror POV blueprint
     if fmt == "mirror_pov":
         selected_keys += ["MIRROR_PHONE_FACE_BLOCK", "HAIR_TUCK_MOTION", "WALL_SWITCH_BASEBOARD"]
 
-    # ── 5. Macro / closeup / hands holding (tactile hand hook blueprint)
+    # ── 6. Macro / closeup / hands holding
     if framing == "macro" or fmt in ("macro_detail", "closeup", "hands_holding"):
         selected_keys += [
             "GEL_TOPCOAT_SPECULAR" if klass.key == "nail_art" else "SKIN_NATURAL_PORES_MATTE",
@@ -1094,45 +1127,58 @@ def get_relevant_modules(scene: dict, klass: ProductClass, visual_dna: dict | No
         if klass.key == "nail_art":
             selected_keys += ["NAIL_BED_TRANSLUCENCY", "RING_SKIN_COMPRESSION"]
 
-    # ── 6. Candid street / outdoor / dappled light
+    # ── 7. Candid street / outdoor / dappled light
     if fmt in ("outdoor_use", "wear_test") or "outdoor" in location or "street" in location or "sidewalk" in location:
         selected_keys += ["DAPPLED_LEAF_SHADOWS", "HARD_MIDDAY_SUN_SHADOWS", "COARSE_STUCCO_GROUND", "STREET_MIRROR_EXTRA_001"]
 
-    # ── 7. Food / plate_up
+    # ── 8. Food / plate_up
     if fmt == "plate_up" or klass.key == "food":
         selected_keys += ["FOOD_SURFACE_001", "GLASS_CONDENSATION_BEADS"]
 
-    # ── 8. Optics micro-triggers — lightly added to every pin so diffusion never looks CGI
+    # ── 9. Optics micro-triggers — lightly added to every pin so diffusion never looks CGI
     selected_keys += ["PHONE_LENS_WIDE_DISTORTION", "COMPUTATIONAL_HDR_NOISE", "NATURAL_OPTICAL_FALLOFF"]
-    if fmt in ("bedroom_home", "flat_lay"):
+    if fmt in ("bedroom_home", "flat_lay") and not is_clean_class:
         selected_keys += ["BLOWN_WINDOW_HIGHLIGHTS"]
     if fmt in ("discovery", "shopping_cart"):
         selected_keys += ["STORE_WINDOW_REFLECTIONS"]
 
-    # ── 9. Lived-in clutter — always add one so the pin never looks showroom-empty
+    # ── 10. Lived-in clutter — always add one so the pin never looks showroom-empty
     if fmt not in ("discovery", "shopping_cart"):
         selected_keys += ["TABLETOP_EVERYDAY_TILES", "CLUTTER_EXTRA_001"]
 
-    # ── 10. Viral hook spice — 1 in 3 pins gets an absurd/meme edge for scroll-stop
+    # ── 11. Viral hook spice
     if klass.key in ("nail_art", "toys") or fmt in ("hands_holding", "unboxing"):
         selected_keys += ["VIRAL_HOOK_EXTRA_001"]
 
+    # Filter out messy UGC modules if this is a clean product class
+    if is_clean_class:
+        selected_keys = [k for k in selected_keys if k not in MESSY_UGC_MODULES]
+
     # Deduplicate, keep order, cap to 10
     seen = set()
-    deduped: list[str] = []
+    items: list[tuple[str, str]] = []
     for k in selected_keys:
         if k not in seen and k in MODULES:
             seen.add(k)
-            deduped.append(MODULES[k])
-        if len(deduped) >= 10:
+            items.append((k, MODULES[k]))
+        if len(items) >= 10:
             break
 
     # If still under 6, pad with random lived-in / lighting extras so every prompt is dense
-    if len(deduped) < 6:
+    if len(items) < 6:
         for pad in ["LIGHT_PHYSICS_001", "MATERIAL_EXTRA_001", "OPTICS_EXTRA_001"]:
-            if pad in MODULES and MODULES[pad] not in deduped:
-                deduped.append(MODULES[pad])
-            if len(deduped) >= 8:
+            if pad in MODULES and pad not in seen:
+                seen.add(pad)
+                items.append((pad, MODULES[pad]))
+            if len(items) >= 8:
                 break
 
-    return deduped
+    return items
+
+
+def get_relevant_modules(scene: dict, klass: ProductClass, visual_dna: dict | None = None) -> list[str]:
+    """
+    Dynamically select realism module texts for this pin.
+    """
+    items = get_relevant_module_items(scene, klass, visual_dna)
+    return [text for _, text in items]

@@ -190,7 +190,7 @@ async def create_reference_from_product(
     if llm_analyzed and analysis_data:
         # Stage 2: Extract real Visual DNA from the LLM's analysis
         try:
-            dna_data = await extract_visual_dna(analysis_data)
+            dna_data = await extract_visual_dna(analysis_data, image_path=dest_path)
         except Exception as e:
             logger.warning(
                 "Visual DNA extraction failed for product-reference %s: %s. "
@@ -400,9 +400,9 @@ async def analyze_reference_endpoint(
         )
         db.add(analysis_record)
 
-    # Stage 2: Extract Visual DNA
+    # Stage 2: Extract Visual DNA (pixel-grounded)
     try:
-        dna_data = await extract_visual_dna(analysis_data)
+        dna_data = await extract_visual_dna(analysis_data, image_path=ref.image_path)
     except PipelineStageError as e:
         logger.error("Visual DNA extraction failed for %s: %s", reference_id, e)
         raise HTTPException(502, f"Visual DNA extraction failed: {e}") from e

@@ -113,6 +113,7 @@ async def _prepare_brief(
     job: Job,
     db: AsyncSession,
     allow_subject_mismatch: bool = False,
+    wanted_count: int = 4,
 ) -> PromptVersion:
     """
     Make sure the job has DNA, a scene and a compiled prompt, then return the
@@ -299,24 +300,82 @@ async def _prepare_brief(
     latest_pv = pv_result.scalars().first()
 
     if not latest_pv:
-        result = compile_prompt(
-            visual_dna=dna_data,
-            product=product_data,
-            product_truth=product_truth,
-            scene=scene_data,
-            trend_label=ref.trend_label,
-            commerce_dna=commerce_dna,
-            concept=first_concept,
-        )
-        if not result.is_valid:
-            raise HTTPException(400, {
-                "message": "Prompt compilation failed; nothing was generated.",
-                "warnings": [{"severity": w.severity, "message": w.message} for w in result.warnings],
-            })
-        latest_pv = PromptVersion(job_id=job.id, version=1, prompt_text=result.prompt)
-        db.add(latest_pv)
-        await db.flush()
-        await db.refresh(latest_pv)
+        if concepts:
+            concept_list = concepts[:wanted_count]
+            compiled_pvs: list[PromptVersion] = []
+            for idx, cur_concept in enumerate(concept_list):
+                if idx == 0:
+                    cur_scene = scene_data
+                else:
+                    try:
+                        cur_scene = await generate_scene(
+                            dna_data,
+                            product_data,
+                            product_truth,
+                            trend_label=ref.trend_label,
+                            reference_analysis=reference_analysis,
+                            commerce_dna=commerce_dna,
+                            concept=cur_concept,
+                        )
+                    except Exception as e:
+                        logger.warning(
+                            "Scene generation for concept %s failed: %s; using base scene.",
+                            idx + 1, e,
+                        )
+                        cur_scene = scene_data
+
+                result = compile_prompt(
+                    visual_dna=dna_data,
+                    product=product_data,
+                    product_truth=product_truth,
+                    scene=cur_scene,
+                    trend_label=ref.trend_label,
+                    commerce_dna=commerce_dna,
+                    concept=cur_concept,
+                )
+                if not result.is_valid:
+                    raise HTTPException(400, {
+                        "message": f"Prompt compilation failed for concept {idx + 1}; nothing was generated.",
+                        "warnings": [{"severity": w.severity, "message": w.message} for w in result.warnings],
+                    })
+                pv = PromptVersion(
+                    job_id=job.id,
+                    version=idx + 1,
+                    prompt_text=result.prompt,
+                    concept_index=idx,
+                    concept_json=json.dumps(cur_concept) if cur_concept else None,
+                    modules_json=json.dumps(result.module_keys),
+                )
+                db.add(pv)
+                compiled_pvs.append(pv)
+            await db.flush()
+            latest_pv = compiled_pvs[0]
+        else:
+            result = compile_prompt(
+                visual_dna=dna_data,
+                product=product_data,
+                product_truth=product_truth,
+                scene=scene_data,
+                trend_label=ref.trend_label,
+                commerce_dna=commerce_dna,
+                concept=first_concept,
+            )
+            if not result.is_valid:
+                raise HTTPException(400, {
+                    "message": "Prompt compilation failed; nothing was generated.",
+                    "warnings": [{"severity": w.severity, "message": w.message} for w in result.warnings],
+                })
+            latest_pv = PromptVersion(
+                job_id=job.id,
+                version=1,
+                prompt_text=result.prompt,
+                concept_index=0,
+                concept_json=json.dumps(first_concept) if first_concept else None,
+                modules_json=json.dumps(result.module_keys),
+            )
+            db.add(latest_pv)
+            await db.flush()
+            await db.refresh(latest_pv)
 
     try:
         _advance_job_state(job, "PROMPT_READY")
@@ -338,11 +397,14 @@ def _launch_background_run(
     backend: str,
     count: int,
     ref_image_path: str | None = None,
+    prompt_texts: list[str] | None = None,
 ) -> None:
     """Write the run's inputs to disk and start the background generator."""
     run_dir = (settings.outputs_path / job_id).resolve()
     run_dir.mkdir(parents=True, exist_ok=True)
     (run_dir / "prompt.txt").write_text(prompt_text, encoding="utf-8")
+    if prompt_texts:
+        (run_dir / "prompts.json").write_text(json.dumps(prompt_texts, indent=2), encoding="utf-8")
     if ref_image_path:
         (run_dir / "ref_image_path.txt").write_text(str(ref_image_path), encoding="utf-8")
     bg_log = open(run_dir / "bg_log.txt", "w", encoding="utf-8")
@@ -392,20 +454,14 @@ async def generate_endpoint(
     """
     job = await db.get(Job, job_id)
     if not job:
-        raise HTTPException(404, "Job not found")
+        raise HTTPException(404, "Job not found.")
 
-    chosen = backend or settings.generation_backend or AUTO
-    known = {AUTO} | {b["id"] for b in describe_backends()}
-    if chosen not in known:
-        raise HTTPException(400, f"Unknown backend {chosen!r}; expected one of {', '.join(sorted(known))}.")
-
+    chosen = backend or settings.generation_backend
     wanted = count or settings.generation_variation_count
 
-    # WAITING_FOR_FLOW means the operator took the package away to generate by
-    # hand; its only legal exits are an upload or FAILED. Say that plainly rather
-    # than forcing the job through FAILED, which would record a failure that
-    # never happened.
-    if job.current_state == "WAITING_FOR_FLOW":
+    # A previous manual run is still waiting for drops: don't start a background
+    # generator on top of it.
+    if job.current_state == "PROMPT_READY" and job.provider == "flow_ui":
         raise HTTPException(
             409,
             "This job is waiting for images you are generating manually in Google Flow. "
@@ -420,17 +476,46 @@ async def generate_endpoint(
     except InvalidTransitionError as e:  # pragma: no cover — FAILED->DRAFT is legal
         raise HTTPException(409, str(e)) from e
 
-    latest_pv = await _prepare_brief(job, db, allow_subject_mismatch=allow_subject_mismatch)
+    latest_pv = await _prepare_brief(
+        job,
+        db,
+        allow_subject_mismatch=allow_subject_mismatch,
+        wanted_count=wanted,
+    )
 
     try:
         _advance_job_state(job, "GENERATING")
     except InvalidTransitionError as e:
         raise HTTPException(409, str(e)) from e
 
+    product = await db.get(Product, job.product_id)
     ref = await db.get(Reference, job.reference_id)
-    ref_image_path = ref.image_path if ref else None
 
-    _launch_background_run(job.id, latest_pv.prompt_text, chosen, wanted, ref_image_path=ref_image_path)
+    # Weakness 5: Image conditioning uses the product image to enforce product fidelity.
+    # Style is carried purely through the compiled prompt text.
+    condition_image_path = None
+    if product and product.product_image_path and Path(product.product_image_path).is_file():
+        condition_image_path = str(product.product_image_path)
+        logger.info("Conditioning generation on product image: %s", condition_image_path)
+    elif ref and ref.image_path and Path(ref.image_path).is_file():
+        condition_image_path = str(ref.image_path)
+        logger.info("Product image not on disk; falling back to reference image: %s", condition_image_path)
+
+    # Multi-concept prompt versions
+    pvs_res = await db.execute(
+        select(PromptVersion).where(PromptVersion.job_id == job.id).order_by(PromptVersion.version.asc())
+    )
+    all_pvs = list(pvs_res.scalars().all())
+    prompt_texts = [p.prompt_text for p in all_pvs] if all_pvs else [latest_pv.prompt_text]
+
+    _launch_background_run(
+        job.id,
+        latest_pv.prompt_text,
+        chosen,
+        wanted,
+        ref_image_path=condition_image_path,
+        prompt_texts=prompt_texts,
+    )
     await db.commit()
 
     return {

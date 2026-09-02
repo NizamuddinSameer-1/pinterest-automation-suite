@@ -375,15 +375,15 @@ async def generate_scene(
     if not scene or problems:
         for attempt in (1, 2):
             try:
-                scene = await asyncio.wait_for(llm.structured_output(prompt, system=SYSTEM_PROMPT), timeout=8)
+                scene = await asyncio.wait_for(llm.structured_output(prompt, system=SYSTEM_PROMPT), timeout=45)
             except asyncio.TimeoutError as e:
                 # No substitution. In LLM mode the operator asked for the LLM, so
                 # a timeout is a failure the caller must see (and retry or switch
                 # scene_director_llm off), not a scene that silently repeats.
-                logger.error("Scene LLM timed out after 8s (attempt %d) for %s", attempt, klass.key)
+                logger.error("Scene LLM timed out after 45s (attempt %d) for %s", attempt, klass.key)
                 raise PipelineStageError(
                     "scene_director",
-                    f"the LLM director timed out after 8s on attempt {attempt} for a "
+                    f"the LLM director timed out after 45s on attempt {attempt} for a "
                     f"{klass.noun} (class {klass.key}); set SCENE_DIRECTOR_LLM=false "
                     "to direct from the taxonomy menu instead",
                 ) from e

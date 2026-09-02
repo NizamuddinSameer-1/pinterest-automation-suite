@@ -227,18 +227,26 @@ async def _run_flow_ui(prompt: str, job_id: str, count: int, reference_image: st
     )
 
 
-async def _run_pollinations(prompt: str, job_id: str, count: int) -> list[str]:
+async def _run_pollinations(
+    prompt: str,
+    job_id: str,
+    count: int,
+    prompts: list[str] | None = None,
+) -> list[str]:
     from app.services.image_gen import generate_image_automated
 
+    prompt_list = prompts if prompts else [prompt] * max(1, count)
     if count > 1:
         logger.info(
-            "pollinations backend produces one image per call; generating %d sequentially", count
+            "pollinations backend: generating %d images across %d concept prompt(s)",
+            count, len(prompt_list),
         )
     paths: list[str] = []
     errors: list[str] = []
-    for _ in range(max(1, count)):
+    for i in range(max(1, count)):
+        p = prompt_list[i % len(prompt_list)]
         try:
-            paths.append(str(await generate_image_automated(prompt=prompt, job_id=job_id)))
+            paths.append(str(await generate_image_automated(prompt=p, job_id=job_id)))
         except Exception as e:  # noqa: BLE001 — recorded, then re-raised if nothing worked
             errors.append(str(e))
     if not paths:
@@ -339,6 +347,7 @@ async def generate_variations(
     count: int = 4,
     backend: str = AUTO,
     reference_image: str | Path | None = None,
+    prompts: list[str] | None = None,
 ) -> GenerationResult:
     """
     Generate `count` variations for `job_id` and return verified image paths.
@@ -349,6 +358,7 @@ async def generate_variations(
         backend: `auto`, or one of `flow_api` / `flow_ui` / `pollinations`.
             A named backend is never substituted: if it fails, the call fails.
         reference_image: optional path to style reference image to paste into Flow.
+        prompts: optional list of concept prompts for multi-concept diversity.
 
     Raises:
         GenerationFailed: nothing verifiable was produced.
@@ -374,10 +384,13 @@ async def generate_variations(
     for name in order:
         logger.info("Job %s: trying generation backend %s", job_id, name)
         try:
+            primary_prompt = prompts[0] if prompts else prompt
             if name == FLOW_UI:
-                produced = await _run_flow_ui(prompt, job_id, count, reference_image=reference_image)
+                produced = await _run_flow_ui(primary_prompt, job_id, count, reference_image=reference_image)
+            elif name == POLLINATIONS:
+                produced = await _run_pollinations(prompt, job_id, count, prompts=prompts)
             else:
-                produced = await _RUNNERS[name](prompt, job_id, count)
+                produced = await _RUNNERS[name](primary_prompt, job_id, count)
         except GenerationUnavailable as e:
             attempts.append(f"{name}: unavailable — {e}")
             logger.info("Job %s: backend %s unavailable — %s", job_id, name, e)

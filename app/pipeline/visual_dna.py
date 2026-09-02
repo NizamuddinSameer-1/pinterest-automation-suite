@@ -83,27 +83,50 @@ Return ONLY the JSON object. No extra text.
 """
 
 
-async def extract_visual_dna(analysis: dict[str, Any]) -> dict[str, Any]:
+async def extract_visual_dna(
+    analysis: dict[str, Any],
+    image_path: str | Path | None = None,
+) -> dict[str, Any]:
     """
-    Extract Visual DNA from a reference analysis.
+    Extract Visual DNA directly from pixels (vision call) if image_path is provided,
+    or from structured analysis JSON as a fallback.
 
     Args:
         analysis: The structured ReferenceAnalysis dict from Stage 1.
+        image_path: Optional path to the reference image file.
 
     Returns:
-        VisualDNA dict with stable photographic characteristics.
+        VisualDNA dict with stable photographic characteristics grounded in measured facts.
     """
-    logger.info("Extracting Visual DNA from analysis")
+    logger.info("Extracting Visual DNA (image_path: %s)", bool(image_path))
+
+    measured_facts = analysis.get("measured_facts") or {}
+    measured_prompt = ""
+    if measured_facts:
+        measured_prompt = (
+            f"\n\nMEASURED PHYSICAL METRICS (ground truth from pixel analysis):\n"
+            f"```json\n{json.dumps(measured_facts, indent=2)}\n```\n"
+            "Ground your lighting_dna, camera_dna, and composition_dna in these measured metrics."
+        )
 
     prompt = (
         "Here is the structured reference analysis:\n\n"
-        f"```json\n{json.dumps(analysis, indent=2)}\n```\n\n"
-        "Extract the stable Visual DNA from this analysis. "
+        f"```json\n{json.dumps(analysis, indent=2)}\n```\n"
+        f"{measured_prompt}\n\n"
+        "Extract the stable Visual DNA from this reference. "
         "Return the VisualDNA JSON object only."
     )
 
     try:
-        result = await llm.structured_output(prompt, system=SYSTEM_PROMPT)
+        if image_path and Path(image_path).is_file():
+            # Pixel-grounded vision call: inspect pixels directly alongside the analysis
+            result = await llm.analyze_image(
+                prompt=prompt,
+                image_path=str(image_path),
+                system=SYSTEM_PROMPT,
+            )
+        else:
+            result = await llm.structured_output(prompt, system=SYSTEM_PROMPT)
     except Exception as e:
         logger.error("Visual DNA extraction failed: %s", e)
         raise PipelineStageError("visual_dna", f"LLM call failed: {e}") from e
@@ -118,6 +141,9 @@ async def extract_visual_dna(analysis: dict[str, Any]) -> dict[str, Any]:
             f"LLM returned a DNA object missing required keys: {', '.join(missing)}. "
             f"Got keys: {sorted(result.keys())}",
         )
+
+    if measured_facts:
+        result["measured_facts"] = measured_facts
 
     logger.info("Visual DNA extraction complete")
     return result

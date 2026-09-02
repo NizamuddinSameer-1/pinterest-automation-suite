@@ -159,17 +159,29 @@ Return structured JSON only, no other text.
 
 async def analyze_reference(image_path: str) -> dict[str, Any]:
     """
-    Run vision analysis on a reference image.
+    Run vision analysis on a reference image, grounded in physical pixel measurements.
 
     Args:
         image_path: Absolute or relative path to the image file.
 
     Returns:
-        Structured ReferenceAnalysis dict.
+        Structured ReferenceAnalysis dict with measured_facts.
     """
     logger.info("Analyzing reference image: %s", image_path)
+    from app.services.image_measurements import measure_image
+    import json
+
+    measured = measure_image(image_path)
+
+    prompt = (
+        f"{USER_PROMPT}\n\n"
+        f"MEASURED PHYSICAL METRICS (ground truth from pixel analysis):\n"
+        f"```json\n{json.dumps(measured, indent=2)}\n```\n"
+        "Ground your lighting, camera sharpness, contrast, and color analysis in these measured values."
+    )
+
     result = await llm.analyze_image(
-        prompt=USER_PROMPT,
+        prompt=prompt,
         image_path=image_path,
         system=SYSTEM_PROMPT,
     )
@@ -182,5 +194,9 @@ async def analyze_reference(image_path: str) -> dict[str, Any]:
             f"Vision model returned no recognisable analysis. Got keys: {sorted(result.keys())}",
         )
 
-    logger.info("Reference analysis complete")
+    # Attach physical metrics directly so downstream stages (Visual DNA, Prompt Compiler)
+    # have access to ground-truth palette, luminance, and contrast.
+    result["measured_facts"] = measured
+
+    logger.info("Reference analysis complete (with physical measurements)")
     return result
