@@ -206,7 +206,55 @@ async def generate_catalog_index(repo_dir: Path | None = None) -> str:
 
     index_path = repo / "index.html"
     index_path.write_text(rendered_index, encoding="utf-8")
-    logger.info("Generated master lookbook catalog index.html with %d lookbooks", len(lookbooks))
+
+    # Generate sitemap.xml & robots.txt with current catalog URLs
+    bridge_domain = getattr(settings, "bridge_domain", None) or os.environ.get("BRIDGE_DOMAIN", "")
+    if not bridge_domain:
+        bridge_domain = (
+            f"{settings.vercel_project_name}.vercel.app"
+            if settings.vercel_project_name
+            else "pinterest-lookbooks-beta.vercel.app"
+        )
+
+    base_url = f"https://{bridge_domain}"
+    today_iso = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d")
+
+    sitemap_lines = [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
+        '  <url>',
+        f'    <loc>{base_url}/</loc>',
+        f'    <lastmod>{today_iso}</lastmod>',
+        '    <changefreq>daily</changefreq>',
+        '    <priority>1.0</priority>',
+        '  </url>',
+    ]
+    for lb in lookbooks:
+        mtime = lb.get("mtime")
+        if mtime:
+            lastmod = datetime.datetime.fromtimestamp(mtime, tz=datetime.timezone.utc).strftime("%Y-%m-%d")
+        else:
+            lastmod = today_iso
+        sitemap_lines.extend([
+            '  <url>',
+            f'    <loc>{base_url}/{lb["slug"]}.html</loc>',
+            f'    <lastmod>{lastmod}</lastmod>',
+            '    <changefreq>weekly</changefreq>',
+            '    <priority>0.8</priority>',
+            '  </url>',
+        ])
+    sitemap_lines.append('</urlset>\n')
+    sitemap_xml = "\n".join(sitemap_lines)
+    (repo / "sitemap.xml").write_text(sitemap_xml, encoding="utf-8")
+
+    robots_txt = (
+        "User-agent: *\n"
+        "Allow: /\n\n"
+        f"Sitemap: {base_url}/sitemap.xml\n"
+    )
+    (repo / "robots.txt").write_text(robots_txt, encoding="utf-8")
+
+    logger.info("Generated master catalog index.html, sitemap.xml, and robots.txt with %d lookbooks", len(lookbooks))
     return rendered_index
 
 

@@ -54,8 +54,8 @@ def _gather_lookbook_payload() -> list[dict[str, Any]]:
         rel_name = file_path.relative_to(lookbooks_dir).as_posix()
         fname = file_path.name
 
-        # Include HTML, JS, JSON, TS Edge Functions and WebP/image assets
-        if fname.endswith((".html", ".js", ".ts", ".json", ".css")):
+        # Include HTML, JS, JSON, TS Edge Functions, CSS, XML, TXT and image assets
+        if fname.endswith((".html", ".js", ".ts", ".json", ".css", ".xml", ".txt")):
             try:
                 content = file_path.read_text(encoding="utf-8")
                 payload_files.append({

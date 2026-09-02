@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, Response
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,11 +20,60 @@ from app.config import settings
 from app.database import get_db
 from app.models.models import Job, PinDraft, Product
 from app.services.article_generator import generate_lookbook_html
+from app.services.bridge_copilot import BridgeCopyUnavailable
 from app.services.output_service import _product_to_dict
 from app.services.vercel_publisher import VercelDeployError, deploy_article_to_vercel
 
 router = APIRouter(tags=["lookbooks"])
 logger = logging.getLogger("pre.api.lookbooks")
+
+
+@router.get("/lookbook.css")
+async def serve_lookbook_css():
+    """Serve the shared lookbook stylesheet."""
+    css_path = settings.lookbooks_path / "lookbook.css"
+    if not css_path.exists():
+        static_css = Path(__file__).resolve().parents[1] / "static" / "lookbook.css"
+        if static_css.exists():
+            css_path = static_css
+    if not css_path.exists():
+        raise HTTPException(status_code=404, detail="Stylesheet not found")
+    return Response(content=css_path.read_text(encoding="utf-8"), media_type="text/css")
+
+
+@router.get("/sitemap.xml")
+async def serve_sitemap():
+    """Serve the dynamic sitemap XML."""
+    sitemap_path = settings.lookbooks_path / "sitemap.xml"
+    if not sitemap_path.exists():
+        from app.services.git_publisher import generate_catalog_index
+        await generate_catalog_index()
+    if not sitemap_path.exists():
+        raise HTTPException(status_code=404, detail="Sitemap not found")
+    return Response(content=sitemap_path.read_text(encoding="utf-8"), media_type="application/xml")
+
+
+@router.get("/robots.txt")
+async def serve_robots():
+    """Serve the dynamic robots.txt."""
+    robots_path = settings.lookbooks_path / "robots.txt"
+    if not robots_path.exists():
+        from app.services.git_publisher import generate_catalog_index
+        await generate_catalog_index()
+    if not robots_path.exists():
+        raise HTTPException(status_code=404, detail="Robots.txt not found")
+    return Response(content=robots_path.read_text(encoding="utf-8"), media_type="text/plain")
+
+
+@router.get("/img/{filename}")
+async def serve_lookbook_image(filename: str):
+    """Serve a lookbook image from data/lookbooks/img/."""
+    clean_name = Path(filename).name
+    target = settings.lookbooks_path / "img" / clean_name
+    if not target.exists():
+        raise HTTPException(status_code=404, detail="Image not found")
+    media_type = "image/webp" if clean_name.endswith(".webp") else "image/jpeg"
+    return FileResponse(target, media_type=media_type)
 
 
 @router.get("/lookbooks/{identifier}", response_class=HTMLResponse)
@@ -104,13 +153,16 @@ async def generate_job_lookbook(
     scene_data = json.loads(job.scene_json) if job.scene_json else {}
 
     # 1. Assemble HTML & OG thumbnail
-    slug, html_content, og_image_bytes = await generate_lookbook_html(
-        job_id=job.id,
-        product_data=product_data,
-        scene_data=scene_data,
-        image_paths=image_paths,
-        affiliate_url=product.affiliate_url,
-    )
+    try:
+        slug, html_content, og_image_bytes = await generate_lookbook_html(
+            job_id=job.id,
+            product_data=product_data,
+            scene_data=scene_data,
+            image_paths=image_paths,
+            affiliate_url=product.affiliate_url,
+        )
+    except BridgeCopyUnavailable as e:
+        raise HTTPException(status_code=422, detail=f"Grounded copy generation failed: {e}") from e
 
     # 2. Deploy to Vercel Production
     try:
