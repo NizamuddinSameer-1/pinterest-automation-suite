@@ -45,7 +45,8 @@ class Settings(BaseSettings):
     openrouter_model: str = "deepseek/deepseek-chat-v4-0324"
 
     gemini_api_key: str = ""
-    gemini_model: str = "gemini-3.6-flash"
+    gemini_model: str = "gemini-3-flash-preview"
+    gemini_vision_model: str = "gemini-3-flash-preview"
 
     # ── Pinterest API (Phase 3) ──────────────────
     pinterest_client_id: str = ""
@@ -97,6 +98,7 @@ class Settings(BaseSettings):
     vercel_project_name: str = "pinterest-lookbooks"
     vercel_team_id: str = ""
     bridge_domain: str = ""
+    require_lookbook_destination: bool = True  # Pins must link to the deployed blog lookbook, never raw affiliate links
 
     # ── Git-Backed Lookbook Publisher (GitHub + Vercel) ──
     lookbook_git_remote: str = ""  # e.g. https://github.com/<user>/pinterest-lookbooks.git or token URL

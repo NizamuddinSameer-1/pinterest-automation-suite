@@ -207,10 +207,11 @@ async def record_generation_outputs(
     base_title = seo_data["title"]
 
     # ── Generate UGC Lookbook Bridge Page ─────────
-    # The direct affiliate link is the floor: if the lookbook cannot be deployed
-    # the pin still earns through it. An empty bridge_url means the product came
-    # in without an affiliate link, and the pin would ship with nothing to click.
-    bridge_url: str = product.affiliate_url or ""
+    # ── Generate UGC Lookbook Bridge Page ─────────
+    # Pins should link to the authentic, high-converting magazine blog lookbook.
+    # If require_lookbook_destination is True, we never silently fall back to
+    # the raw affiliate redirect url, ensuring Pinterest receives high-quality blog destinations.
+    bridge_url: str = ""
     try:
         from app.services.article_generator import generate_lookbook_html
         from app.services.vercel_publisher import deploy_article_to_vercel
@@ -232,17 +233,14 @@ async def record_generation_outputs(
             bridge_url = deployed_url
             logger.info("Job %s: bridge lookbook ready at %s", job.id, bridge_url)
     except Exception as e:
-        if not bridge_url:
-            # Nothing to fall back to — an empty destination_url is a placeholder,
-            # not a result. Refuse to write pin drafts that cannot earn.
+        if settings.require_lookbook_destination:
             raise PinDestinationUnavailable(
-                f"lookbook deploy failed ({e}) and product {product.id} has no "
-                "affiliate_url to fall back on",
+                f"lookbook generation or deploy failed ({e}). Pins require a live blog lookbook destination URL.",
                 [o.id for o in outputs],
             ) from e
+        bridge_url = product.affiliate_url or ""
         logger.warning(
-            "Job %s: bridge lookbook unavailable (%s); falling back to the direct "
-            "affiliate link", job.id, e,
+            "Job %s: bridge lookbook unavailable (%s); falling back to direct affiliate link", job.id, e,
         )
 
     if not bridge_url:

@@ -390,27 +390,27 @@ class UnifiedLLMProvider:
         errors: list[str] = []
         if self._openrouter:
             try:
-                return await asyncio.wait_for(self._openrouter.generate_text(prompt, system), timeout=20)
+                return await asyncio.wait_for(self._openrouter.generate_text(prompt, system), timeout=45)
             except asyncio.TimeoutError:
-                errors.append("OpenRouter text: timeout 20s")
-                logger.warning("OpenRouter text timed out (20s)")
+                errors.append("OpenRouter text: timeout 45s")
+                logger.warning("OpenRouter text timed out (45s)")
             except Exception as e:
                 errors.append(f"OpenRouter: {e}")
                 logger.warning("OpenRouter text failed: %s. Trying fallback...", e)
         if self._gemini:
             try:
-                return await asyncio.wait_for(self._gemini.generate_text(prompt, system), timeout=25)
+                return await asyncio.wait_for(self._gemini.generate_text(prompt, system), timeout=45)
             except asyncio.TimeoutError:
-                errors.append("Gemini text: timeout 25s")
-                logger.warning("Gemini text timed out (25s)")
+                errors.append("Gemini text: timeout 45s")
+                logger.warning("Gemini text timed out (45s)")
             except Exception as e:
                 errors.append(f"Gemini: {e}")
                 logger.warning("Gemini text failed: %s. Trying fallback...", e)
         if self._opencode:
             try:
-                return await asyncio.wait_for(self._opencode.generate_text(prompt, system), timeout=25)
+                return await asyncio.wait_for(self._opencode.generate_text(prompt, system), timeout=45)
             except asyncio.TimeoutError:
-                errors.append("OpenCode text: timeout 25s")
+                errors.append("OpenCode text: timeout 45s")
                 logger.warning("OpenCode text timed out")
             except Exception as e:
                 errors.append(f"OpenCode: {e}")
@@ -427,28 +427,28 @@ class UnifiedLLMProvider:
         errors: list[str] = []
         if self._openrouter:
             try:
-                return await asyncio.wait_for(self._openrouter.structured_output(prompt, system), timeout=20)
+                return await asyncio.wait_for(self._openrouter.structured_output(prompt, system), timeout=75)
             except asyncio.TimeoutError:
-                errors.append("OpenRouter structured: timeout 20s")
-                logger.warning("OpenRouter structured timed out (20s)")
+                errors.append("OpenRouter structured: timeout 75s")
+                logger.warning("OpenRouter structured timed out (75s)")
             except Exception as e:
                 errors.append(f"OpenRouter: {e}")
                 logger.warning("OpenRouter structured output failed: %s. Trying fallback...", e)
         if self._gemini:
             try:
-                return await asyncio.wait_for(self._gemini.structured_output(prompt, system), timeout=25)
+                return await asyncio.wait_for(self._gemini.structured_output(prompt, system), timeout=75)
             except asyncio.TimeoutError:
-                errors.append("Gemini structured: timeout 25s")
-                logger.warning("Gemini structured timed out (25s)")
+                errors.append("Gemini structured: timeout 75s")
+                logger.warning("Gemini structured timed out (75s)")
             except Exception as e:
                 errors.append(f"Gemini: {e}")
                 logger.warning("Gemini structured output failed: %s. Trying fallback...", e)
         if self._opencode:
             try:
-                return await asyncio.wait_for(self._opencode.structured_output(prompt, system), timeout=25)
+                return await asyncio.wait_for(self._opencode.structured_output(prompt, system), timeout=75)
             except asyncio.TimeoutError:
-                errors.append("OpenCode structured: timeout 25s")
-                logger.warning("OpenCode structured timed out")
+                errors.append("OpenCode structured: timeout 75s")
+                logger.warning("OpenCode structured timed out (75s)")
             except Exception as e:
                 errors.append(f"OpenCode: {e}")
                 logger.warning("OpenCode structured output failed: %s", e)

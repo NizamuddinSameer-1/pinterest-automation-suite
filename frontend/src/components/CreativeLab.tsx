@@ -4,7 +4,7 @@ import {
   Upload, Sparkles, Copy, Check, Download, Send, Calendar,
   RefreshCw, Pin, ArrowRight, ShieldCheck, Film, Camera, Zap, CheckCircle2,
   ExternalLink, Layers, CheckSquare, Package, Sparkle, Tag, ShoppingBag,
-  ChevronDown, X, CheckCircle
+  ChevronDown, X, CheckCircle, BookOpen
 } from 'lucide-react';
 
 interface CreativeLabProps {
@@ -78,6 +78,7 @@ export const CreativeLab: React.FC<CreativeLabProps> = ({
   const [scheduleAllPins, setScheduleAllPins] = useState<boolean>(false);
   const [previewPromptText, setPreviewPromptText] = useState<string>('');
   const [compilingPrompt, setCompilingPrompt] = useState<boolean>(false);
+  const [deployingLookbook, setDeployingLookbook] = useState<boolean>(false);
 
   // Flow Projects Router state
   const [flowProjects, setFlowProjects] = useState<string[]>([]);
@@ -250,6 +251,24 @@ export const CreativeLab: React.FC<CreativeLabProps> = ({
       console.error(e);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleDeployLookbook = async () => {
+    if (!currentJob?.id) return;
+    try {
+      setDeployingLookbook(true);
+      setActionMessage('Deploying authentic magazine lookbook to Vercel...');
+      const res = await api.generateLookbook(currentJob.id);
+      if (res?.deploy_url) {
+        setActionMessage(`✅ Lookbook live at ${res.deploy_url}! All pin destination links updated.`);
+        const pins = await api.getPins();
+        setJobPins(pins.filter((p) => p.job_id === currentJob.id));
+      }
+    } catch (err: any) {
+      alert(err.message || 'Failed to deploy lookbook');
+    } finally {
+      setDeployingLookbook(false);
     }
   };
 
@@ -1327,6 +1346,18 @@ export const CreativeLab: React.FC<CreativeLabProps> = ({
                       <span>View Live Lookbook ↗</span>
                     </a>
                   )}
+                  {currentJob?.id && (
+                    <button
+                      onClick={handleDeployLookbook}
+                      disabled={deployingLookbook}
+                      className="btn btn-secondary btn-sm"
+                      style={{ fontSize: '0.74rem', fontWeight: 700, borderColor: 'rgba(56, 139, 253, 0.5)', color: '#58a6ff' }}
+                      title="Generate grounded review article & deploy to Vercel"
+                    >
+                      <BookOpen size={12} />
+                      <span>{deployingLookbook ? 'Deploying...' : 'Deploy/Sync Lookbook'}</span>
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -1521,7 +1552,18 @@ export const CreativeLab: React.FC<CreativeLabProps> = ({
                         {activePin?.board_name || 'Not set — pick a board before publishing'}
                       </div>
 
-                      <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '8px', marginBottom: '4px' }}>Destination Link</div>
+                      <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '8px', marginBottom: '4px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <span>Destination Link</span>
+                        {activePin?.destination_url?.endsWith('.html') ? (
+                          <span style={{ fontSize: '0.7rem', color: '#3fb950', background: 'rgba(63, 185, 80, 0.15)', padding: '2px 6px', borderRadius: '4px', fontWeight: 600 }}>
+                            ✓ Live Blog Lookbook
+                          </span>
+                        ) : activePin?.destination_url?.includes('/api/go') ? (
+                          <span style={{ fontSize: '0.7rem', color: '#d29922', background: 'rgba(210, 153, 34, 0.15)', padding: '2px 6px', borderRadius: '4px', fontWeight: 600 }}>
+                            ⚠️ Direct Redirect
+                          </span>
+                        ) : null}
+                      </div>
                       <div style={{ fontSize: '0.82rem', color: '#58a6ff', wordBreak: 'break-all' }}>
                         {activePin?.destination_url || 'No affiliate URL set'}
                       </div>
