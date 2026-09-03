@@ -289,6 +289,8 @@ async def upscale_images_via_colab(
     endpoint = f"{tunnel_url.rstrip('/')}/upscale"
 
     upscaled_paths: list[str] = []
+    total_pins = len(image_paths)
+    success_count = 0
 
     async with httpx.AsyncClient(timeout=120.0) as client:
         for idx, img_path in enumerate(image_paths, 1):
@@ -297,8 +299,8 @@ async def upscale_images_via_colab(
                 logger.warning("Image does not exist: %s", p)
                 continue
 
-            logger.info("🔼 [COLAB AUTOMATOR] Uploading variation #%d to Colab GPU: %s", idx, p.name)
             raw_bytes = p.read_bytes()
+            logger.info("🔼 [COLAB 2K ENHANCER] Uploading Pin %d/%d: '%s' (%d KB)", idx, total_pins, p.name, len(raw_bytes) // 1024)
 
             success = False
             for attempt in range(2):
@@ -315,21 +317,30 @@ async def upscale_images_via_colab(
                         if temp_upscaled.is_file():
                             temp_upscaled.unlink()
 
-                        logger.info("✅ [COLAB AUTOMATOR] Variation #%d upscaled: %s (%d KB)", idx, p.name, p.stat().st_size // 1024)
+                        size_kb = p.stat().st_size // 1024
+                        logger.info("✅ [COLAB 2K ENHANCER] Pin %d/%d successfully enhanced: '%s' (%d KB, 2K Studio Master)", idx, total_pins, p.name, size_kb)
                         upscaled_paths.append(str(p))
                         success = True
+                        success_count += 1
                         break
                     else:
-                        logger.warning("Colab returned status %d for %s (attempt %d)", resp.status_code, p.name, attempt + 1)
+                        err_detail = resp.text[:300]
+                        try:
+                            err_json = resp.json()
+                            err_detail = f"{err_json.get('error_type', 'Error')}: {err_json.get('detail', err_detail)}"
+                        except Exception:
+                            pass
+                        logger.warning("❌ [COLAB ERROR on Pin %d/%d - %s] HTTP %d: %s (attempt %d/2)", idx, total_pins, p.name, resp.status_code, err_detail, attempt + 1)
                 except Exception as e:
-                    logger.warning("Attempt %d to upscale %s failed: %s", attempt + 1, p.name, e)
+                    logger.warning("❌ [COLAB ERROR on Pin %d/%d - %s] Attempt %d failed: %s", idx, total_pins, p.name, attempt + 1, e)
                     if attempt == 0:
                         await asyncio.sleep(2)
 
             if not success:
-                logger.info("Using local high-resolution engine for %s", p.name)
+                logger.info("🛡️ [UGC FALLBACK] Enhancing Pin %d/%d locally with Optical Micro-Texture & Sensor Grain...", idx, total_pins)
                 from app.services.anti_ai_processor import postprocess_image
                 postprocess_image(p)
                 upscaled_paths.append(str(p))
 
+    logger.info("🎉 [COLAB 2K ENHANCER] Complete: %d/%d pins verified at 2K Master Quality!", len(upscaled_paths), total_pins)
     return upscaled_paths

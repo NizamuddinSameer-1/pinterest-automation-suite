@@ -83,15 +83,22 @@ def _try_colab_upscale(image_bytes: bytes, colab_url: str) -> bytes | None:
             files = {"file": ("input.jpg", image_bytes, "image/jpeg")}
             resp = client.post(endpoint, files=files)
             if resp.status_code == 200 and len(resp.content) > 5000:
-                logger.info("✅ [AI UPSCALER] 4x-UltraSharp upscaler succeeded (%d KB returned)", len(resp.content) // 1024)
+                logger.info("✅ [AI UPSCALER] 4x-UltraSharp 2K upscaler succeeded (%d KB returned)", len(resp.content) // 1024)
                 return resp.content
+            
+            err_detail = resp.text[:200]
+            try:
+                err_json = resp.json()
+                err_detail = f"{err_json.get('error_type', 'Error')}: {err_json.get('detail', err_detail)}"
+            except Exception:
+                pass
             logger.warning(
-                "⚠️ [AI UPSCALER] Colab returned HTTP %d: %s. Falling back to local UGC texture engine.",
+                "❌ [AI UPSCALER] Colab returned HTTP %d: %s. Falling back to local UGC texture engine.",
                 resp.status_code,
-                resp.text[:200],
+                err_detail,
             )
     except Exception as e:
-        logger.warning("⚠️ [AI UPSCALER] Colab upscaler connection error: %s. Falling back to local UGC engine.", e)
+        logger.warning("❌ [AI UPSCALER] Colab upscaler connection error: %s. Falling back to local UGC engine.", e)
 
     return None
 
