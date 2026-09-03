@@ -9,7 +9,7 @@
 #    (Runtime -> Change runtime type -> T4 GPU -> Save)
 # 2. It downloads 4x-UltraSharp and starts a secure Cloudflare public tunnel.
 # 3. Copy the generated URL into your local .env as:
-#    COLAB_UPSCALER_URL=https://xxxx.trycloudflare.com
+#    COLAB_UPSCALER_URL=https://your-tunnel-id.trycloudflare.com
 # ==============================================================================
 
 import os
@@ -30,7 +30,7 @@ subprocess.run(["chmod", "+x", "/usr/local/bin/cloudflared"], check=True)
 MODEL_NAME = "4x-UltraSharp.pth"
 MODEL_URL = "https://huggingface.co/lokCX/4x-Ultrasharp/resolve/main/4x-UltraSharp.pth"
 print(f"🧠 [3/4] Downloading {MODEL_NAME} (Ultra-photorealistic UGC & fabric detail model, 67MB)...")
-if not os.path.exists(MODEL_NAME):
+if not os.path.exists(MODEL_NAME) or os.path.getsize(MODEL_NAME) < 50_000_000:
     subprocess.run(["curl", "-s", "-L", MODEL_URL, "-o", MODEL_NAME], check=True)
 
 # --- STEP 2: Load Model onto GPU ---
