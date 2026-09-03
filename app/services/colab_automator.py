@@ -29,6 +29,7 @@ from app.services.browser_utils import kill_chrome_for_profile
 logger = logging.getLogger("pre.colab_automator")
 
 PROFILE_DIR = Path("./data/colab_profile").resolve()
+TUNNEL_CACHE = Path("./data/colab_tunnel.txt").resolve()
 CLOUDFLARE_URL_REGEX = re.compile(r"https://[a-zA-Z0-9-]+\.trycloudflare\.com")
 
 _ACTIVE_CONTEXT: BrowserContext | None = None
@@ -36,7 +37,7 @@ _ACTIVE_PAGE: Page | None = None
 _ACTIVE_TUNNEL_URL: str | None = None
 
 
-async def get_or_launch_colab(notebook_url: str | None = None) -> tuple[Page, str]:
+async def get_or_launch_colab(notebook_url: str | None = None) -> tuple[Page | None, str]:
     """
     Launch or reuse the Google Colab browser page and return (page, tunnel_url).
     Ensures T4 GPU is active, executes the notebook, and extracts the Cloudflare tunnel URL.
@@ -47,16 +48,27 @@ async def get_or_launch_colab(notebook_url: str | None = None) -> tuple[Page, st
     if not url:
         raise ValueError("No COLAB_NOTEBOOK_URL provided in configuration or settings.")
 
-    # 1. If browser is already open and page is active and responding, reuse
-    if _ACTIVE_PAGE and not _ACTIVE_PAGE.is_closed() and _ACTIVE_TUNNEL_URL:
+    # 1. Fast path: check cached tunnel file or active tunnel URL
+    cached_candidates = [_ACTIVE_TUNNEL_URL]
+    if TUNNEL_CACHE.exists():
         try:
-            async with httpx.AsyncClient(timeout=4.0) as client:
-                r = await client.get(_ACTIVE_TUNNEL_URL)
-                if r.status_code == 200:
-                    logger.info("⚡ [COLAB AUTOMATOR] Reusing active open Colab browser & tunnel: %s", _ACTIVE_TUNNEL_URL)
-                    return _ACTIVE_PAGE, _ACTIVE_TUNNEL_URL
+            cached_candidates.append(TUNNEL_CACHE.read_text(encoding="utf-8").strip())
         except Exception:
-            _ACTIVE_TUNNEL_URL = None
+            pass
+
+    for candidate in cached_candidates:
+        if candidate and candidate.startswith("http"):
+            try:
+                async with httpx.AsyncClient(timeout=3.0) as client:
+                    r = await client.get(candidate)
+                    if r.status_code == 200:
+                        logger.info("⚡ [COLAB AUTOMATOR] Verified active live tunnel: %s", candidate)
+                        _ACTIVE_TUNNEL_URL = candidate
+                        return _ACTIVE_PAGE, candidate
+            except Exception:
+                pass
+
+    _ACTIVE_TUNNEL_URL = None
 
     p = await async_playwright().start()
 

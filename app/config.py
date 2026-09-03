@@ -77,8 +77,10 @@ class Settings(BaseSettings):
     upscaler_target_width: int = 1080       # Full HD Pinterest Pin width (min 1080px)
     upscaler_jpeg_quality: int = 98         # 98% Studio-grade JPEG quality
     upscaler_subsampling: int = 0           # 0 = 4:4:4 zero chroma subsampling
-    colab_upscaler_url: str = ""            # Optional Google Colab / Cloudflare URL for Real-ESRGAN
+    colab_upscaler_url: str = ""            # Optional Google Colab / Cloudflare URL for Real-ESRGAN / 4x-UltraSharp
     colab_notebook_url: str = ""            # Your Google Colab notebook shareable link (drive.google.com / colab.research.google.com)
+    ugc_grain_amount: float = 2.5           # Micro-sensor grain to break AI plastic smoothness (0 to disable, 2.5 default)
+    ugc_sharpen_percent: int = 140          # High-frequency micro-texture unsharp mask percent (fabric weave & skin pores)
     # Board used when the SEO stage suggests none. This was hardcoded as a literal
     # in the publisher, both generation paths and the batch upload route, so
     # changing boards meant editing four files.

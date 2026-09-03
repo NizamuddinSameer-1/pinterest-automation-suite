@@ -31,7 +31,7 @@ async def apply_fix():
             let updated = [];
             for (let i = 0; i < models.length; i++) {
                 const val = models[i].getValue();
-                if (val.includes('basicsr') || val.includes('Install dependencies') || val.includes('realesrgan')) {
+                if (val.includes('basicsr') || val.includes('Install dependencies') || val.includes('realesrgan') || val.includes('RealESRGAN') || val.includes('UltraSharp') || val.includes('Spandrel') || val.includes('cloudflared')) {
                     // Use pushEditOperations so Monaco registers the edit and notifies Colab
                     const range = models[i].getFullModelRange();
                     models[i].pushEditOperations([], [{ range: range, text: code }], () => null);

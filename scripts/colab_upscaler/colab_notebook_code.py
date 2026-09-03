@@ -1,14 +1,17 @@
 # ==============================================================================
-# 🚀 PINTEREST REALISM ENGINE - FREE CLOUD GPU AI UPSCALER (GOOGLE COLAB)
+# 🚀 PINTEREST REALISM ENGINE — UGC PHOTOREALISM AI UPSCALER (GOOGLE COLAB)
 # ==============================================================================
+# Fine-tuned for real-world textures: fabric weave, clothing stitches, skin pores,
+# and hair strands — with ZERO waxy/cartoon plastic smoothing.
+#
 # 1. Run this entire cell in Google Colab with T4 GPU enabled.
 #    (Runtime -> Change runtime type -> T4 GPU -> Save)
-# 2. It downloads the AI model and starts a Cloudflare public tunnel.
+# 2. It downloads the 4x-UltraSharp AI model and starts a Cloudflare public tunnel.
 # 3. Copy the generated URL into your local .env as:
 #    COLAB_UPSCALER_URL=https://xxxx.trycloudflare.com
 # ==============================================================================
 
-# --- STEP 1: Fast & Clean Installs (No broken basicsr, 100% stable) ---
+# --- STEP 1: Fast & Clean Installs (Modern Spandrel AI Engine) ---
 print("📦 [1/4] Installing FastAPI, Uvicorn & Spandrel (modern AI upscaler engine)...")
 import subprocess, sys
 
@@ -19,11 +22,13 @@ print("🌐 [2/4] Setting up Cloudflare tunnel...")
 subprocess.run(["curl", "-s", "-L", "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64", "-o", "/usr/local/bin/cloudflared"], check=True)
 subprocess.run(["chmod", "+x", "/usr/local/bin/cloudflared"], check=True)
 
-# Download RealESRGAN_x4plus weights if not present
-print("🧠 [3/4] Downloading Real-ESRGAN x4plus AI model weights (64MB)...")
+# Download 4x-UltraSharp weights (Gold Standard for Photorealistic UGC & Micro-Textures)
+MODEL_NAME = "4x-UltraSharp.pth"
+MODEL_URL = "https://huggingface.co/lokCX/4x-Ultrasharp/resolve/main/4x-UltraSharp.pth"
+print(f"🧠 [3/4] Downloading {MODEL_NAME} (Ultra-photorealistic UGC & fabric detail model, 67MB)...")
 import os
-if not os.path.exists("RealESRGAN_x4plus.pth"):
-    subprocess.run(["curl", "-s", "-L", "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth", "-o", "RealESRGAN_x4plus.pth"], check=True)
+if not os.path.exists(MODEL_NAME):
+    subprocess.run(["curl", "-s", "-L", MODEL_URL, "-o", MODEL_NAME], check=True)
 
 # --- STEP 2: Load Model onto GPU ---
 import io
@@ -42,12 +47,12 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"⚡ Loading model on: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else 'CPU (Warning: GPU not active!)'}")
 
 model_loader = ModelLoader()
-upscale_model = model_loader.load_from_file("RealESRGAN_x4plus.pth")
+upscale_model = model_loader.load_from_file(MODEL_NAME)
 upscale_model = upscale_model.to(device).eval()
 if device.type == "cuda":
     upscale_model = upscale_model.half()  # 16-bit half precision for 2x faster GPU inference!
 
-print("✅ Real-ESRGAN Model loaded into GPU VRAM successfully!")
+print("✅ 4x-UltraSharp Photorealism Model loaded into GPU VRAM successfully!")
 
 # --- STEP 3: FastAPI Web Server ---
 app = FastAPI(title="Pinterest Realism Engine AI Upscaler")
@@ -56,14 +61,15 @@ app = FastAPI(title="Pinterest Realism Engine AI Upscaler")
 def health_check():
     return {
         "status": "online",
-        "service": "Pinterest Realism Engine AI Upscaler",
+        "service": "Pinterest Realism Engine 4x-UltraSharp UGC Upscaler",
+        "model": "4x-UltraSharp (Photorealistic UGC Details)",
         "device": torch.cuda.get_device_name(0) if torch.cuda.is_available() else "cpu",
         "half_precision": device.type == "cuda"
     }
 
 @app.post("/upscale")
 async def upscale_endpoint(file: UploadFile = File(...)):
-    """Receives image bytes, runs Real-ESRGAN on GPU, returns 98% 4:4:4 master JPEG."""
+    """Receives image bytes, runs 4x-UltraSharp on GPU, returns 98% 4:4:4 master JPEG."""
     raw_bytes = await file.read()
     input_image = Image.open(io.BytesIO(raw_bytes)).convert("RGB")
     

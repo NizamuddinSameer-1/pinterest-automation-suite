@@ -25,6 +25,8 @@ from app.config import settings
 
 logger = logging.getLogger("pre.anti_ai_processor")
 
+TUNNEL_CACHE = Path("./data/colab_tunnel.txt").resolve()
+
 #: The 120px watermark band was calibrated on Flow's ~1376px-tall renders.
 #: Proportional: 120 / 1376 ≈ 8.7% of the height.
 _WATERMARK_BAND_RATIO = 120 / 1376
@@ -35,10 +37,38 @@ def _auto_crop_px(height: int) -> int:
     return min(480, max(40, round(height * _WATERMARK_BAND_RATIO)))
 
 
+def _resolve_colab_url() -> str | None:
+    """Find active Google Colab 4x-UltraSharp AI upscaler endpoint."""
+    candidates: list[str] = []
+
+    conf = getattr(settings, "colab_upscaler_url", "").strip()
+    if conf:
+        candidates.append(conf)
+
+    if TUNNEL_CACHE.exists():
+        try:
+            cached = TUNNEL_CACHE.read_text(encoding="utf-8").strip()
+            if cached and cached not in candidates:
+                candidates.append(cached)
+        except Exception:
+            pass
+
+    for cand in candidates:
+        if cand.startswith("http"):
+            try:
+                with httpx.Client(timeout=2.5) as client:
+                    r = client.get(cand)
+                    if r.status_code == 200:
+                        return cand
+            except Exception:
+                pass
+    return None
+
+
 def _try_colab_upscale(image_bytes: bytes, colab_url: str) -> bytes | None:
     """
-    Query an external Google Colab or Cloud GPU server running Real-ESRGAN / AI upscaler.
-    Allows laptops with low RAM (2 GB) and no GPU to get 4K AI upscaled pins for free.
+    Query Google Colab GPU running 4x-UltraSharp (Fine-Tuned for UGC Realism & Micro-Textures).
+    Recovers authentic fabric weave, clothing stitches, and skin pores without plastic smoothing.
     """
     if not colab_url or not colab_url.startswith("http"):
         return None
@@ -48,20 +78,20 @@ def _try_colab_upscale(image_bytes: bytes, colab_url: str) -> bytes | None:
         endpoint = f"{endpoint}/upscale"
 
     try:
-        logger.info("📡 [AI UPSCALER] Sending image to Colab GPU upscaler: %s", endpoint)
-        with httpx.Client(timeout=30.0) as client:
+        logger.info("📡 [AI UPSCALER] Sending image to Colab 4x-UltraSharp GPU upscaler: %s", endpoint)
+        with httpx.Client(timeout=60.0) as client:
             files = {"file": ("input.jpg", image_bytes, "image/jpeg")}
             resp = client.post(endpoint, files=files)
             if resp.status_code == 200 and len(resp.content) > 5000:
-                logger.info("✅ [AI UPSCALER] Colab AI upscaler succeeded (%d KB returned)", len(resp.content) // 1024)
+                logger.info("✅ [AI UPSCALER] 4x-UltraSharp upscaler succeeded (%d KB returned)", len(resp.content) // 1024)
                 return resp.content
             logger.warning(
-                "⚠️ [AI UPSCALER] Colab returned HTTP %d: %s. Falling back to local Lanczos engine.",
+                "⚠️ [AI UPSCALER] Colab returned HTTP %d: %s. Falling back to local UGC texture engine.",
                 resp.status_code,
                 resp.text[:200],
             )
     except Exception as e:
-        logger.warning("⚠️ [AI UPSCALER] Colab upscaler connection error: %s. Falling back to local Lanczos.", e)
+        logger.warning("⚠️ [AI UPSCALER] Colab upscaler connection error: %s. Falling back to local UGC engine.", e)
 
     return None
 
@@ -72,7 +102,8 @@ def postprocess_image(
     crop_bottom_px: int | None = None,
 ) -> str:
     """
-    Post-process an image: remove watermark, upscale to 1080p, and save with studio 98% 4:4:4 clarity.
+    Post-process an image: remove watermark, enhance UGC micro-details (fabric & skin pores),
+    inject organic camera sensor grain to break AI plastic smoothness, and save with studio 98% 4:4:4 clarity.
 
     Args:
         image_path: Path to the source image.
@@ -93,10 +124,10 @@ def postprocess_image(
     try:
         raw_bytes = src.read_bytes()
 
-        # Step 1: Check if Google Colab AI Upscaler is configured & active
-        colab_url = getattr(settings, "colab_upscaler_url", "").strip()
-        if colab_url:
-            upscaled_bytes = _try_colab_upscale(raw_bytes, colab_url)
+        # Step 1: Check if Google Colab 4x-UltraSharp AI Upscaler is active
+        active_colab_url = _resolve_colab_url()
+        if active_colab_url:
+            upscaled_bytes = _try_colab_upscale(raw_bytes, active_colab_url)
             if upscaled_bytes:
                 raw_bytes = upscaled_bytes
 
@@ -112,8 +143,7 @@ def postprocess_image(
                 img = img.crop((0, 0, w, h - crop_px))
                 w, h = img.size
 
-            # Step 4: 2K Resolution Standard (Max 1440px width / 2560px height)
-            # Scales low-res up to 2K, or cleanly scales down 4K+ to 2K
+            # Step 4: 2K Master Resolution Standard (Max 1440px width / 2560px height)
             MAX_2K_WIDTH = 1440
             MAX_2K_HEIGHT = 2560
 
@@ -130,8 +160,30 @@ def postprocess_image(
                 img = img.resize((new_w, new_h), Image.Resampling.LANCZOS)
                 w, h = img.size
 
-            # Step 5: Studio Save (100% Natural, zero artificial sharpening, 4:4:4 clean colors)
-            jpeg_quality = getattr(settings, "upscaler_jpeg_quality", 95)
+            # Step 5: UGC Photorealistic Micro-Detail Recovery (Anti-Smoothing)
+            # 1. High-frequency UnsharpMask to pop fabric weave, clothing seams, and skin texture
+            sharpen_pct = getattr(settings, "ugc_sharpen_percent", 140)
+            if sharpen_pct > 0:
+                img = img.filter(ImageFilter.UnsharpMask(radius=1.2, percent=sharpen_pct, threshold=1))
+
+            # 2. Micro-clarity & contrast pop to eliminate dull AI haze
+            img = ImageEnhance.Sharpness(img).enhance(1.15)
+            img = ImageEnhance.Contrast(img).enhance(1.03)
+
+            # 3. Organic UGC Camera Sensor Micro-Grain (Kills Plastic AI Smoothness)
+            grain_amount = getattr(settings, "ugc_grain_amount", 2.5)
+            if grain_amount > 0:
+                try:
+                    import numpy as np
+                    arr = np.array(img, dtype=np.float32)
+                    grain = np.random.normal(0, float(grain_amount), arr.shape)
+                    arr = np.clip(arr + grain, 0, 255).astype(np.uint8)
+                    img = Image.fromarray(arr)
+                except Exception as e:
+                    logger.debug("Grain injection note: %s", e)
+
+            # Step 6: Studio Master Save (98% quality, 4:4:4 zero chroma subsampling)
+            jpeg_quality = getattr(settings, "upscaler_jpeg_quality", 98)
             subsampling = getattr(settings, "upscaler_subsampling", 0)  # 0 = 4:4:4
 
             img.save(
@@ -144,7 +196,7 @@ def postprocess_image(
 
         if temp_dst.is_file() and temp_dst.stat().st_size > 1024:
             shutil.move(str(temp_dst), str(dst))
-            logger.info("✅ Enhanced studio-quality pin saved: %s (%d KB, 4:4:4)", dst.name, dst.stat().st_size // 1024)
+            logger.info("✅ Enhanced studio UGC pin saved: %s (%d KB, 4:4:4)", dst.name, dst.stat().st_size // 1024)
             return str(dst)
 
     except Exception as e:
