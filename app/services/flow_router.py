@@ -5,14 +5,17 @@ Distributes image generation jobs across a pool of Google Flow project workspace
 to prevent any single project canvas from becoming bloated, laggy, or hitting memory limits.
 
 Features:
-- Multi-project round-robin / random load balancing.
-- Auto-loads from data/flow_projects.json, .env FLOW_PROJECT_URLS, or built-in pool.
-- Automatic failover: if a project URL fails or is deleted, rotates to the next healthy project.
-- Runtime extensibility: add/remove projects via API or JSON file.
+- Persistent rotation state on disk (data/flow_router_state.json) across Python processes.
+- Multi-project round-robin (sequential) or random load balancing.
+- Auto-loads from Flow Profiles List.txt, data/flow_projects.json, .env FLOW_PROJECT_URLS, or defaults.
+- Usage tracking and metrics per project workspace.
+- Automatic failover: if a project URL fails or is deleted, rotates to the next candidate.
+- Runtime extensibility: add/remove projects and switch strategy via API or UI.
 """
 
 from __future__ import annotations
 
+import datetime
 import json
 import logging
 import random
@@ -25,6 +28,8 @@ from app.config import settings
 logger = logging.getLogger("pre.flow_router")
 
 PROJECTS_FILE = Path("./data/flow_projects.json").resolve()
+STATE_FILE = Path("./data/flow_router_state.json").resolve()
+WORKSPACE_PROFILES_FILE = Path("./Flow Profiles List.txt").resolve()
 
 # Default seed of the 10 user-provided Google Flow projects
 DEFAULT_FLOW_PROJECTS = [
@@ -40,8 +45,6 @@ DEFAULT_FLOW_PROJECTS = [
     "https://labs.google/fx/tools/flow/project/3f560e82-d0de-46a0-b322-0e72555af503",
 ]
 
-_ROUND_ROBIN_INDEX = 0
-
 
 def _clean_url(url: str) -> str:
     """Strip whitespace and trailing slashes."""
@@ -54,10 +57,39 @@ def _is_valid_flow_url(url: str) -> bool:
     return bool(re.search(r"labs\.google/fx/tools/flow/project/[a-zA-Z0-9_-]+", clean))
 
 
+def _load_state() -> dict:
+    """Read the persistent router state from data/flow_router_state.json."""
+    if STATE_FILE.exists():
+        try:
+            return json.loads(STATE_FILE.read_text(encoding="utf-8"))
+        except Exception as e:
+            logger.warning("Could not parse router state %s: %s", STATE_FILE, e)
+    return {
+        "strategy": getattr(settings, "flow_router_strategy", "round_robin"),
+        "current_index": 0,
+        "last_selected_project": "",
+        "last_selected_uuid": "",
+        "last_selected_at": None,
+        "usage_counts": {},
+        "history": [],
+    }
+
+
+def _save_state(state: dict) -> None:
+    """Write the persistent router state atomically."""
+    try:
+        STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        tmp = STATE_FILE.with_suffix(".tmp")
+        tmp.write_text(json.dumps(state, indent=2), encoding="utf-8")
+        tmp.replace(STATE_FILE)
+    except Exception as e:
+        logger.error("Failed to save flow router state to %s: %s", STATE_FILE, e)
+
+
 def get_project_pool() -> list[str]:
     """
     Retrieve all configured Google Flow project URLs.
-    Merges data/flow_projects.json, .env variables, and defaults.
+    Merges Flow Profiles List.txt, data/flow_projects.json, .env variables, and defaults.
     """
     projects: list[str] = []
     seen: set[str] = set()
@@ -68,7 +100,15 @@ def get_project_pool() -> list[str]:
             seen.add(c)
             projects.append(c)
 
-    # 1. Read from data/flow_projects.json if exists
+    # 1. Read from root 'Flow Profiles List.txt' if exists
+    if WORKSPACE_PROFILES_FILE.exists():
+        try:
+            for line in WORKSPACE_PROFILES_FILE.read_text(encoding="utf-8").splitlines():
+                _add(line)
+        except Exception as e:
+            logger.warning("Could not read %s: %s", WORKSPACE_PROFILES_FILE, e)
+
+    # 2. Read from data/flow_projects.json if exists
     if PROJECTS_FILE.exists():
         try:
             data = json.loads(PROJECTS_FILE.read_text(encoding="utf-8"))
@@ -80,7 +120,7 @@ def get_project_pool() -> list[str]:
         except Exception as e:
             logger.warning("Could not parse %s: %s", PROJECTS_FILE, e)
 
-    # 2. Read from .env FLOW_PROJECT_URLS (comma or newline separated)
+    # 3. Read from .env FLOW_PROJECT_URLS (comma or newline separated)
     env_multi = getattr(settings, "flow_project_urls", None)
     if env_multi:
         if isinstance(env_multi, list):
@@ -90,16 +130,19 @@ def get_project_pool() -> list[str]:
             for u in re.split(r"[,\n;]+", env_multi):
                 _add(u)
 
-    # 3. Read from single .env FLOW_PROJECT_URL (can be comma-separated)
+    # 4. Read from single .env FLOW_PROJECT_URL (can be comma-separated)
     env_single = getattr(settings, "flow_project_url", "")
     if env_single:
         for u in re.split(r"[,\n;]+", env_single):
             _add(u)
 
-    # 4. If pool is empty, initialize with default 10 projects and save
+    # 5. If pool is empty, initialize with default 10 projects
     if not projects:
         for u in DEFAULT_FLOW_PROJECTS:
             _add(u)
+
+    # Always ensure data/flow_projects.json has the active pool
+    if not PROJECTS_FILE.exists():
         save_project_pool(projects)
 
     return projects
@@ -113,7 +156,7 @@ def save_project_pool(projects: Sequence[str]) -> bool:
         payload = {
             "projects": valid,
             "total": len(valid),
-            "updated_at": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(),
+            "updated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         }
         PROJECTS_FILE.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         logger.info("Saved %d Google Flow projects to %s", len(valid), PROJECTS_FILE)
@@ -123,48 +166,134 @@ def save_project_pool(projects: Sequence[str]) -> bool:
         return False
 
 
-def get_next_project_url(strategy: str = "round_robin") -> str:
+def get_all_project_candidates(strategy: str | None = None, job_id: str | None = None) -> list[str]:
     """
-    Get the next Google Flow project workspace URL from the router pool.
+    Return the complete list of project URLs in rotation / priority order,
+    persisting the rotation state across Python processes.
 
-    Args:
-        strategy: "round_robin" (default) or "random".
+    Supported strategies:
+      - 'round_robin' (default): Cycles sequentially 1..N across runs.
+      - 'random': Randomly selects a workspace from the pool for each run.
 
     Returns:
-        str: Selected Google Flow project URL.
+        list[str]: Candidate URLs ordered by priority (first candidate is the selected one).
     """
-    global _ROUND_ROBIN_INDEX
-    pool = get_project_pool()
-    if not pool:
-        # Fallback to absolute default
-        return DEFAULT_FLOW_PROJECTS[0]
-
-    if strategy == "random":
-        chosen = random.choice(pool)
-    else:
-        # Round-robin
-        chosen = pool[_ROUND_ROBIN_INDEX % len(pool)]
-        _ROUND_ROBIN_INDEX = (_ROUND_ROBIN_INDEX + 1) % len(pool)
-
-    project_id = chosen.split("/")[-1]
-    logger.info("🔄 [FLOW ROUTER] Selected project %s (Pool size: %d)", project_id, len(pool))
-    return chosen
-
-
-def get_all_project_candidates() -> list[str]:
-    """
-    Return the complete list of project URLs in priority/rotation order.
-    Used by the automator to try multiple projects if one fails.
-    """
-    global _ROUND_ROBIN_INDEX
     pool = get_project_pool()
     if not pool:
         return list(DEFAULT_FLOW_PROJECTS)
 
-    # Re-order starting from current round-robin index
-    idx = _ROUND_ROBIN_INDEX % len(pool)
-    _ROUND_ROBIN_INDEX = (_ROUND_ROBIN_INDEX + 1) % len(pool)
-    return pool[idx:] + pool[:idx]
+    state = _load_state()
+
+    # Strategy resolution: parameter > config setting > saved state > default 'round_robin'
+    active_strategy = strategy or getattr(settings, "flow_router_strategy", None) or state.get("strategy", "round_robin")
+    active_strategy = str(active_strategy).lower().strip()
+    if active_strategy not in ("round_robin", "random"):
+        active_strategy = "round_robin"
+
+    usage_counts = state.get("usage_counts", {})
+    if not isinstance(usage_counts, dict):
+        usage_counts = {}
+
+    if active_strategy == "random":
+        # Random selection: pick randomly, shuffle remainder for fallback
+        chosen_idx = random.randrange(len(pool))
+        chosen_url = pool[chosen_idx]
+        other_candidates = [p for i, p in enumerate(pool) if i != chosen_idx]
+        random.shuffle(other_candidates)
+        ordered_candidates = [chosen_url] + other_candidates
+    else:
+        # Round-robin: persist index across runs/processes and rotate sequentially
+        current_idx = int(state.get("current_index", 0))
+        chosen_idx = current_idx % len(pool)
+        next_idx = (chosen_idx + 1) % len(pool)
+        state["current_index"] = next_idx
+        chosen_url = pool[chosen_idx]
+        ordered_candidates = pool[chosen_idx:] + pool[:chosen_idx]
+
+    proj_uuid = chosen_url.split("/")[-1]
+    usage_counts[proj_uuid] = usage_counts.get(proj_uuid, 0) + 1
+
+    state["strategy"] = active_strategy
+    state["last_selected_project"] = chosen_url
+    state["last_selected_uuid"] = proj_uuid
+    state["last_selected_at"] = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    state["usage_counts"] = usage_counts
+
+    history = state.get("history", [])
+    if not isinstance(history, list):
+        history = []
+    history.insert(0, {
+        "job_id": job_id or "direct",
+        "project_uuid": proj_uuid,
+        "strategy": active_strategy,
+        "selected_at": state["last_selected_at"],
+    })
+    state["history"] = history[:50]
+
+    _save_state(state)
+
+    logger.info(
+        "🔄 [FLOW ROUTER] Mode: %s | Selected project %s (#%d/%d) | Total runs: %d",
+        active_strategy, proj_uuid, chosen_idx + 1, len(pool), usage_counts[proj_uuid]
+    )
+    print(
+        f"[FLOW ROUTER] Selected Workspace #{chosen_idx + 1}/{len(pool)} ({proj_uuid}) "
+        f"using strategy='{active_strategy}' (Workspace run count: {usage_counts[proj_uuid]})"
+    )
+
+    return ordered_candidates
+
+
+def get_next_project_url(strategy: str | None = None) -> str:
+    """
+    Get the next Google Flow project workspace URL from the router pool.
+    """
+    candidates = get_all_project_candidates(strategy=strategy)
+    return candidates[0] if candidates else DEFAULT_FLOW_PROJECTS[0]
+
+
+def record_project_verified(url: str, job_id: str | None = None) -> None:
+    """Record that a project workspace opened and settled successfully."""
+    proj_uuid = url.rstrip("/").split("/")[-1]
+    state = _load_state()
+    verified = state.get("verified_projects", {})
+    if not isinstance(verified, dict):
+        verified = {}
+    verified[proj_uuid] = {
+        "last_verified_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "job_id": job_id,
+    }
+    state["verified_projects"] = verified
+    _save_state(state)
+
+
+def get_router_status() -> dict:
+    """Return complete status and metrics of the Flow Project Router."""
+    pool = get_project_pool()
+    state = _load_state()
+    return {
+        "projects": pool,
+        "total": len(pool),
+        "strategy": state.get("strategy", getattr(settings, "flow_router_strategy", "round_robin")),
+        "current_index": state.get("current_index", 0),
+        "last_selected_project": state.get("last_selected_project", ""),
+        "last_selected_uuid": state.get("last_selected_uuid", ""),
+        "last_selected_at": state.get("last_selected_at"),
+        "usage_counts": state.get("usage_counts", {}),
+        "history": state.get("history", [])[:15],
+    }
+
+
+def set_router_strategy(strategy: str) -> tuple[bool, str]:
+    """Set active load balancing strategy ('round_robin' or 'random')."""
+    clean = strategy.lower().strip()
+    if clean not in ("round_robin", "random"):
+        return False, f"Invalid strategy '{strategy}'. Must be 'round_robin' or 'random'."
+    state = _load_state()
+    state["strategy"] = clean
+    _save_state(state)
+    logger.info("🔄 [FLOW ROUTER] Strategy updated to: %s", clean)
+    return True, f"Strategy updated to {clean}."
 
 
 def add_project(url: str) -> tuple[bool, str]:

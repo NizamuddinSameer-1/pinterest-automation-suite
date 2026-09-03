@@ -426,8 +426,8 @@ async def _open_project(page, job_id: str) -> str:
 
     # 1. Flow Project Router pool (round-robin / load-balanced across 10+ projects)
     try:
-        from app.services.flow_router import get_all_project_candidates
-        candidates = get_all_project_candidates()
+        from app.services.flow_router import get_all_project_candidates, record_project_verified
+        candidates = get_all_project_candidates(job_id=job_id)
     except Exception as e:
         logger.warning("Could not load flow_router pool: %s", e)
         candidates = [settings.flow_project_url] if settings.flow_project_url else []
@@ -442,6 +442,8 @@ async def _open_project(page, job_id: str) -> str:
             await _goto_settled(page, candidate, timeout=45000, settle=2.0)
             if await _wait_for_project_route(page):
                 print(f"✅ [FLOW AUTOMATOR] Active Workspace: {page.url}")
+                with contextlib.suppress(Exception):
+                    record_project_verified(page.url, job_id=job_id)
                 return page.url
         print(f"⚠️ [FLOW AUTOMATOR] Project #{idx} ({proj_uuid}) did not open cleanly. Rotating to next project...")
 

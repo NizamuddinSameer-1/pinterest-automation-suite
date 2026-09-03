@@ -477,8 +477,27 @@ export const api = {
     const res = await fetch(`${API_BASE}/jobs/flow/session-status`);
     return res.json();
   },
-  getFlowProjects: async (): Promise<{ projects: string[]; total: number; strategy: string }> => {
+  getFlowProjects: async (): Promise<{
+    projects: string[];
+    total: number;
+    strategy: string;
+    current_index?: number;
+    last_selected_uuid?: string;
+    usage_counts?: Record<string, number>;
+  }> => {
     const res = await fetch(`${API_BASE}/jobs/flow/projects`);
+    return res.json();
+  },
+  setFlowStrategy: async (strategy: 'round_robin' | 'random'): Promise<any> => {
+    const res = await fetch(`${API_BASE}/jobs/flow/projects/strategy`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ strategy }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(err.detail || 'Failed to update Flow strategy');
+    }
     return res.json();
   },
   addFlowProject: async (url: string): Promise<any> => {

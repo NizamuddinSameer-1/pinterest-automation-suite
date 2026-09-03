@@ -82,6 +82,9 @@ export const CreativeLab: React.FC<CreativeLabProps> = ({
 
   // Flow Projects Router state
   const [flowProjects, setFlowProjects] = useState<string[]>([]);
+  const [flowRouterStrategy, setFlowRouterStrategy] = useState<string>('round_robin');
+  const [flowUsageCounts, setFlowUsageCounts] = useState<Record<string, number>>({});
+  const [flowLastUuid, setFlowLastUuid] = useState<string>('');
   const [showProjectsModal, setShowProjectsModal] = useState<boolean>(false);
   const [newProjectUrl, setNewProjectUrl] = useState<string>('');
 
@@ -202,12 +205,15 @@ export const CreativeLab: React.FC<CreativeLabProps> = ({
       const [refs, backendInfo, projectsData, prods] = await Promise.all([
         api.getReferences(),
         api.getGenerationBackends().catch(() => ({ default: 'auto', default_count: 4, backends: [] })),
-        api.getFlowProjects().catch(() => ({ projects: [], total: 0, strategy: '' })),
+        api.getFlowProjects().catch(() => ({ projects: [], total: 0, strategy: 'round_robin', usage_counts: {}, last_selected_uuid: '' })),
         api.getProducts().catch(() => []),
       ]);
       setReferences(refs);
       setBackends(backendInfo.backends || []);
       setFlowProjects(projectsData.projects || []);
+      setFlowRouterStrategy(projectsData.strategy || 'round_robin');
+      setFlowUsageCounts(projectsData.usage_counts || {});
+      setFlowLastUuid(projectsData.last_selected_uuid || '');
       setSavedProducts(prods || []);
       setFlowSessionActive(!!backendInfo.backends?.find(b => b.id === 'flow_api')?.available);
       if (refs.length > 0 && !selectedRefId && !activeProductId) setSelectedRefId(refs[0].id);
@@ -338,6 +344,8 @@ export const CreativeLab: React.FC<CreativeLabProps> = ({
       setNewProjectUrl('');
       const res = await api.getFlowProjects();
       setFlowProjects(res.projects || []);
+      setFlowUsageCounts(res.usage_counts || {});
+      setFlowLastUuid(res.last_selected_uuid || '');
       alert('✅ Google Flow Project successfully added to the router pool!');
     } catch (err: any) {
       alert('Failed to add project: ' + err.message);
@@ -354,8 +362,26 @@ export const CreativeLab: React.FC<CreativeLabProps> = ({
       await api.removeFlowProject(uuid);
       const res = await api.getFlowProjects();
       setFlowProjects(res.projects || []);
+      setFlowUsageCounts(res.usage_counts || {});
+      setFlowLastUuid(res.last_selected_uuid || '');
     } catch (err: any) {
       alert('Failed to remove project: ' + err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSwitchStrategy = async (strategy: 'round_robin' | 'random') => {
+    try {
+      setLoading(true);
+      await api.setFlowStrategy(strategy);
+      setFlowRouterStrategy(strategy);
+      const res = await api.getFlowProjects();
+      setFlowProjects(res.projects || []);
+      setFlowUsageCounts(res.usage_counts || {});
+      setFlowLastUuid(res.last_selected_uuid || '');
+    } catch (err: any) {
+      alert('Failed to update strategy: ' + err.message);
     } finally {
       setLoading(false);
     }
@@ -1767,8 +1793,49 @@ export const CreativeLab: React.FC<CreativeLabProps> = ({
 
             <p style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginBottom: '14px', lineHeight: 1.45 }}>
               Jobs automatically rotate across these workspaces to prevent project canvases from becoming bloated.
-              You can easily add new project URLs or remove old ones at any time.
+              You can easily add new project URLs, remove old ones, or switch the rotation strategy.
             </p>
+
+            {/* Strategy Selector Toggle */}
+            <div style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              marginBottom: '14px',
+              padding: '10px 14px',
+              background: 'rgba(255, 255, 255, 0.03)',
+              borderRadius: '8px',
+              border: '1px solid var(--border-subtle)'
+            }}>
+              <div>
+                <span style={{ fontSize: '0.78rem', fontWeight: 700, color: '#fff', display: 'block' }}>
+                  Rotation Strategy: <strong>{flowRouterStrategy === 'random' ? '🎲 Random Pick' : '🔄 Round Robin (Sequential)'}</strong>
+                </span>
+                <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+                  {flowRouterStrategy === 'random' 
+                    ? 'Randomly picks across healthy workspaces for balanced wear' 
+                    : 'Sequentially cycles #1 → #2 → #3 across runs and remembers last index'}
+                </span>
+              </div>
+              <div style={{ display: 'flex', gap: '6px' }}>
+                <button
+                  type="button"
+                  onClick={() => handleSwitchStrategy('round_robin')}
+                  className={`btn btn-sm ${flowRouterStrategy === 'round_robin' ? 'btn-primary' : 'btn-secondary'}`}
+                  style={{ fontSize: '0.72rem', padding: '4px 10px', fontWeight: 600 }}
+                >
+                  🔄 Round Robin
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleSwitchStrategy('random')}
+                  className={`btn btn-sm ${flowRouterStrategy === 'random' ? 'btn-primary' : 'btn-secondary'}`}
+                  style={{ fontSize: '0.72rem', padding: '4px 10px', fontWeight: 600 }}
+                >
+                  🎲 Random Pick
+                </button>
+              </div>
+            </div>
 
             {/* Add New Project URL Form */}
             <form onSubmit={handleAddProject} style={{ marginBottom: '16px', display: 'flex', gap: '8px' }}>
@@ -1800,6 +1867,8 @@ export const CreativeLab: React.FC<CreativeLabProps> = ({
               ) : (
                 flowProjects.map((url, idx) => {
                   const uuid = url.split('/').pop() || url;
+                  const isLastUsed = uuid === flowLastUuid;
+                  const runs = flowUsageCounts[uuid] || 0;
                   return (
                     <div
                       key={url}
@@ -1809,9 +1878,9 @@ export const CreativeLab: React.FC<CreativeLabProps> = ({
                         justifyContent: 'space-between',
                         padding: '8px 12px',
                         marginBottom: idx < flowProjects.length - 1 ? '6px' : '0',
-                        background: 'rgba(255, 255, 255, 0.03)',
+                        background: isLastUsed ? 'rgba(59, 130, 246, 0.08)' : 'rgba(255, 255, 255, 0.03)',
                         borderRadius: '6px',
-                        border: '1px solid rgba(255, 255, 255, 0.06)',
+                        border: isLastUsed ? '1px solid rgba(59, 130, 246, 0.4)' : '1px solid rgba(255, 255, 255, 0.06)',
                         gap: '8px',
                       }}
                     >
@@ -1820,9 +1889,19 @@ export const CreativeLab: React.FC<CreativeLabProps> = ({
                           #{idx + 1}
                         </span>
                         <div style={{ minWidth: 0 }}>
-                          <span style={{ fontSize: '0.78rem', color: '#fff', fontWeight: 600, display: 'block', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>
-                            {uuid}
-                          </span>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <span style={{ fontSize: '0.78rem', color: '#fff', fontWeight: 600, display: 'block', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>
+                              {uuid}
+                            </span>
+                            {isLastUsed && (
+                              <span style={{ fontSize: '0.62rem', background: 'rgba(59, 130, 246, 0.25)', color: '#93c5fd', padding: '1px 5px', borderRadius: '4px', fontWeight: 700 }}>
+                                ⚡ Last Selected
+                              </span>
+                            )}
+                            <span style={{ fontSize: '0.62rem', background: 'rgba(255, 255, 255, 0.08)', color: '#94a3b8', padding: '1px 5px', borderRadius: '4px' }}>
+                              {runs} run{runs === 1 ? '' : 's'}
+                            </span>
+                          </div>
                           <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>
                             {url}
                           </span>

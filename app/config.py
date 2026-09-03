@@ -65,6 +65,7 @@ class Settings(BaseSettings):
     # had one operator's project UUID compiled into it.
     flow_project_url: str = ""
     flow_project_urls: str = ""
+    flow_router_strategy: str = "round_robin"  # round_robin (sequential rotation) | random (load-balanced)
     # After generation, re-fetch each variation from Flow's server-side upsampler
     # (/v1/flow/upsampleImage) instead of settling for render resolution.
     # "2k" works on free accounts; "4k" is gated to paid Google AI plans (Google

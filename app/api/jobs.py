@@ -104,18 +104,17 @@ async def get_flow_session_status():
 
 @router.get("/flow/projects")
 async def list_flow_projects_endpoint():
-    """List all Google Flow project URLs currently configured in the router pool."""
-    from app.services.flow_router import get_project_pool
-    pool = get_project_pool()
-    return {
-        "projects": pool,
-        "total": len(pool),
-        "strategy": "round_robin_load_balancer",
-    }
+    """List all Google Flow project URLs, rotation strategy, and workspace metrics."""
+    from app.services.flow_router import get_router_status
+    return get_router_status()
 
 
 class AddFlowProjectRequest(BaseModel):
     url: str
+
+
+class FlowStrategyRequest(BaseModel):
+    strategy: str  # "round_robin" | "random"
 
 
 @router.post("/flow/projects")
@@ -123,6 +122,16 @@ async def add_flow_project_endpoint(body: AddFlowProjectRequest):
     """Add a new Google Flow project URL to the load-balancing router pool."""
     from app.services.flow_router import add_project
     ok, msg = add_project(body.url)
+    if not ok:
+        raise HTTPException(status_code=400, detail=msg)
+    return {"status": "success", "message": msg}
+
+
+@router.post("/flow/projects/strategy")
+async def set_flow_strategy_endpoint(body: FlowStrategyRequest):
+    """Set active load balancing strategy ('round_robin' or 'random')."""
+    from app.services.flow_router import set_router_strategy
+    ok, msg = set_router_strategy(body.strategy)
     if not ok:
         raise HTTPException(status_code=400, detail=msg)
     return {"status": "success", "message": msg}
