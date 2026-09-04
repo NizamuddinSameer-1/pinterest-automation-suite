@@ -101,7 +101,8 @@ class Settings(BaseSettings):
     vercel_project_name: str = "pinterest-lookbooks"
     vercel_team_id: str = ""
     bridge_domain: str = ""
-    require_lookbook_destination: bool = True  # Pins must link to the deployed blog lookbook, never raw affiliate links
+    require_lookbook_destination: bool = False  # If True, pin drafting requires a deployed lookbook. Default False: pin drafts use direct affiliate/smart redirect links.
+    auto_create_lookbooks: bool = False  # If False (default), lookbooks are only created on-demand when the user clicks 'Create Batch Lookbook'.
 
     # ── Git-Backed Lookbook Publisher (GitHub + Vercel) ──
     lookbook_git_remote: str = ""  # e.g. https://github.com/<user>/pinterest-lookbooks.git or token URL

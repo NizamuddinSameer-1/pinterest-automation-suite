@@ -264,15 +264,15 @@ export const CreativeLab: React.FC<CreativeLabProps> = ({
     if (!currentJob?.id) return;
     try {
       setDeployingLookbook(true);
-      setActionMessage('Deploying authentic magazine lookbook to Vercel...');
+      setActionMessage('Compiling all batch variations into ONE magazine lookbook & deploying to Vercel...');
       const res = await api.generateLookbook(currentJob.id);
       if (res?.deploy_url) {
-        setActionMessage(`✅ Lookbook live at ${res.deploy_url}! All pin destination links updated.`);
+        setActionMessage(`✅ Batch Lookbook live at ${res.deploy_url}! All variations in this batch connected.`);
         const pins = await api.getPins();
         setJobPins(pins.filter((p) => p.job_id === currentJob.id));
       }
     } catch (err: any) {
-      alert(err.message || 'Failed to deploy lookbook');
+      alert(err.message || 'Failed to deploy batch lookbook');
     } finally {
       setDeployingLookbook(false);
     }
@@ -1367,7 +1367,12 @@ export const CreativeLab: React.FC<CreativeLabProps> = ({
                 </div>
 
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  {jobPins[0]?.destination_url && (
+                  {/* Show View Batch Lookbook link only when an actual deployed HTML lookbook is connected */}
+                  {Boolean(
+                    jobPins[0]?.destination_url &&
+                      (jobPins[0].destination_url.endsWith('.html') ||
+                        (jobPins[0].destination_url.includes('.vercel.app') && !jobPins[0].destination_url.includes('/api/go')))
+                  ) && (
                     <a
                       href={jobPins[0].destination_url}
                       target="_blank"
@@ -1376,7 +1381,7 @@ export const CreativeLab: React.FC<CreativeLabProps> = ({
                       style={{ fontSize: '0.74rem', fontWeight: 700, borderColor: 'rgba(255, 153, 0, 0.5)', color: '#ffb347' }}
                     >
                       <ExternalLink size={12} />
-                      <span>View Live Lookbook ↗</span>
+                      <span>View Batch Lookbook ↗</span>
                     </a>
                   )}
                   {currentJob?.id && (
@@ -1384,11 +1389,23 @@ export const CreativeLab: React.FC<CreativeLabProps> = ({
                       onClick={handleDeployLookbook}
                       disabled={deployingLookbook}
                       className="btn btn-secondary btn-sm"
-                      style={{ fontSize: '0.74rem', fontWeight: 700, borderColor: 'rgba(56, 139, 253, 0.5)', color: '#58a6ff' }}
-                      title="Generate grounded review article & deploy to Vercel"
+                      style={{
+                        fontSize: '0.74rem',
+                        fontWeight: 700,
+                        borderColor: 'rgba(56, 139, 253, 0.5)',
+                        color: '#58a6ff',
+                        background: jobPins[0]?.destination_url?.endsWith('.html') ? 'transparent' : 'rgba(56, 139, 253, 0.12)',
+                      }}
+                      title="Compile all variations from this batch into ONE responsive magazine lookbook and deploy to Vercel"
                     >
-                      <BookOpen size={12} />
-                      <span>{deployingLookbook ? 'Deploying...' : 'Deploy/Sync Lookbook'}</span>
+                      <BookOpen size={13} />
+                      <span>
+                        {deployingLookbook
+                          ? 'Creating Batch Lookbook...'
+                          : jobPins[0]?.destination_url?.endsWith('.html')
+                          ? '🔄 Re-sync Batch Lookbook'
+                          : '📖 Create Batch Lookbook (All Variations)'}
+                      </span>
                     </button>
                   )}
                 </div>
@@ -1589,11 +1606,15 @@ export const CreativeLab: React.FC<CreativeLabProps> = ({
                         <span>Destination Link</span>
                         {activePin?.destination_url?.endsWith('.html') ? (
                           <span style={{ fontSize: '0.7rem', color: '#3fb950', background: 'rgba(63, 185, 80, 0.15)', padding: '2px 6px', borderRadius: '4px', fontWeight: 600 }}>
-                            ✓ Live Blog Lookbook
+                            ✓ Batch Lookbook Connected
                           </span>
                         ) : activePin?.destination_url?.includes('/api/go') ? (
                           <span style={{ fontSize: '0.7rem', color: '#d29922', background: 'rgba(210, 153, 34, 0.15)', padding: '2px 6px', borderRadius: '4px', fontWeight: 600 }}>
-                            ⚠️ Direct Redirect
+                            Direct Affiliate Redirect
+                          </span>
+                        ) : activePin?.destination_url ? (
+                          <span style={{ fontSize: '0.7rem', color: '#58a6ff', background: 'rgba(56, 139, 253, 0.15)', padding: '2px 6px', borderRadius: '4px', fontWeight: 600 }}>
+                            Direct Affiliate Link
                           </span>
                         ) : null}
                       </div>

@@ -213,46 +213,64 @@ async def record_generation_outputs(
     board = seo_data.get("board_suggestion") or settings.default_board_name
     base_title = seo_data["title"]
 
-    # ── Generate UGC Lookbook Bridge Page ─────────
-    # ── Generate UGC Lookbook Bridge Page ─────────
-    # Pins should link to the authentic, high-converting magazine blog lookbook.
-    # If require_lookbook_destination is True, we never silently fall back to
-    # the raw affiliate redirect url, ensuring Pinterest receives high-quality blog destinations.
+    # ── UGC Lookbook Bridge Page ──────────────────
+    # Lookbooks are NOT created automatically during generation. Lookbook creation
+    # is an on-demand action for the entire batch via 'Create Batch Lookbook' in Creative Lab.
     bridge_url: str = ""
-    try:
-        from app.services.article_generator import generate_lookbook_html
-        from app.services.vercel_publisher import deploy_article_to_vercel
+    if getattr(settings, "auto_create_lookbooks", False):
+        try:
+            from app.services.article_generator import generate_lookbook_html
+            from app.services.vercel_publisher import deploy_article_to_vercel
 
-        slug, html_content, og_image_bytes = await generate_lookbook_html(
-            job_id=job.id,
-            product_data=product_data,
-            scene_data=scene_data,
-            image_paths=image_paths,
-            affiliate_url=product.affiliate_url,
-        )
-        deployed_url = await deploy_article_to_vercel(
-            slug=slug,
-            html_content=html_content,
-            job_id=job.id,
-            og_image_bytes=og_image_bytes,
-        )
-        if deployed_url:
-            bridge_url = deployed_url
-            logger.info("Job %s: bridge lookbook ready at %s", job.id, bridge_url)
-    except Exception as e:
-        if settings.require_lookbook_destination:
-            raise PinDestinationUnavailable(
-                f"lookbook generation or deploy failed ({e}). Pins require a live blog lookbook destination URL.",
-                [o.id for o in outputs],
-            ) from e
-        bridge_url = product.affiliate_url or ""
-        logger.warning(
-            "Job %s: bridge lookbook unavailable (%s); falling back to direct affiliate link", job.id, e,
-        )
+            slug, html_content, og_image_bytes = await generate_lookbook_html(
+                job_id=job.id,
+                product_data=product_data,
+                scene_data=scene_data,
+                image_paths=image_paths,
+                affiliate_url=product.affiliate_url,
+            )
+            deployed_url = await deploy_article_to_vercel(
+                slug=slug,
+                html_content=html_content,
+                job_id=job.id,
+                og_image_bytes=og_image_bytes,
+            )
+            if deployed_url:
+                bridge_url = deployed_url
+                logger.info("Job %s: bridge lookbook ready at %s", job.id, bridge_url)
+        except Exception as e:
+            if getattr(settings, "require_lookbook_destination", False):
+                raise PinDestinationUnavailable(
+                    f"lookbook generation or deploy failed ({e}). Pins require a live blog lookbook destination URL.",
+                    [o.id for o in outputs],
+                ) from e
+            logger.warning(
+                "Job %s: bridge lookbook unavailable (%s); falling back to direct affiliate link", job.id, e,
+            )
 
+    # If no lookbook deployed (the default), resolve to product affiliate URL or smart redirect
     if not bridge_url:
+        live_domain = getattr(settings, "bridge_domain", "") or (
+            f"{settings.vercel_project_name}.vercel.app" if settings.vercel_project_name else "pinterest-lookbooks-beta.vercel.app"
+        )
+        if product.affiliate_url:
+            bridge_url = product.affiliate_url
+        elif getattr(product, "asin", None):
+            from app.services.affiliate_router import build_smart_redirect_url
+            bridge_url = build_smart_redirect_url(
+                asin=product.asin,
+                title=product.name,
+                job_id=job.id,
+                bridge_domain=live_domain,
+            )
+        elif getattr(product, "product_url", None):
+            bridge_url = product.product_url
+        else:
+            bridge_url = ""
+
+    if not bridge_url and getattr(settings, "require_lookbook_destination", False):
         raise PinDestinationUnavailable(
-            f"product {product.id} has no affiliate_url and no lookbook was deployed, "
+            f"product {product.id} has no affiliate_url and require_lookbook_destination is enabled, "
             "so the pin drafts would have an empty destination_url",
             [o.id for o in outputs],
         )

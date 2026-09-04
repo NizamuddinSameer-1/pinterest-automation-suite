@@ -18,9 +18,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.database import get_db
-from app.models.models import Job, PinDraft, Product
+from app.models.models import Job, JobOutput, PinDraft, Product
 from app.services.article_generator import generate_lookbook_html
 from app.services.bridge_copilot import BridgeCopyUnavailable
+from app.services.media_paths import resolve_output_image
 from app.services.output_service import _product_to_dict
 from app.services.vercel_publisher import VercelDeployError, deploy_article_to_vercel
 
@@ -141,13 +142,25 @@ async def generate_job_lookbook(
         await db.flush()
 
     output_dir = settings.outputs_path / job_id
-    image_paths = sorted([str(f) for f in output_dir.glob("flow_var_*.jpg")])
+    image_paths: list[str] = []
+
+    # 1. Gather all outputs for this batch from database
+    outputs_stmt = select(JobOutput).where(JobOutput.job_id == job.id)
+    outputs_res = await db.execute(outputs_stmt)
+    job_outputs = outputs_res.scalars().all()
+    for out in job_outputs:
+        resolved = resolve_output_image(out.image_path)
+        if resolved and Path(resolved).exists():
+            image_paths.append(str(resolved))
+
+    # Fallback to disk scan if no DB JobOutput records or files moved
     if not image_paths:
-        # Fallback to any images in job output dir
+        image_paths = sorted([str(f) for f in output_dir.glob("flow_var_*.jpg")])
+    if not image_paths:
         image_paths = sorted([str(f) for f in output_dir.glob("*.jpg")] + [str(f) for f in output_dir.glob("*.png")])
 
     if not image_paths:
-        raise HTTPException(status_code=400, detail="No variation images found on disk for this job.")
+        raise HTTPException(status_code=400, detail="No variation images found on disk for this job batch.")
 
     product_data = _product_to_dict(product)
     scene_data = json.loads(job.scene_json) if job.scene_json else {}
