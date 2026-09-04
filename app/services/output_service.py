@@ -94,21 +94,28 @@ async def _record_outputs(
     image_paths: list[str],
     prompt_version_id: str | None,
 ) -> list[JobOutput]:
-    # 1. Automatic Google Colab AI upscaling via Playwright if notebook is configured
+    # 1. Automatic Google Colab AI upscaling via Playwright if notebook or tunnel is configured
     colab_notebook_url = getattr(settings, "colab_notebook_url", "").strip()
-    if colab_notebook_url:
+    colab_upscaler_url = getattr(settings, "colab_upscaler_url", "").strip()
+    colab_target = colab_notebook_url or colab_upscaler_url
+    upscaled_via_colab = False
+
+    if colab_target:
         try:
             from app.services.colab_automator import upscale_images_via_colab
-            await upscale_images_via_colab(image_paths, colab_notebook_url)
+            await upscale_images_via_colab(image_paths, notebook_url=colab_notebook_url or None)
+            upscaled_via_colab = True
         except Exception as e:
             logger.warning("Job %s: Colab AI upscaling note: %s. Continuing with local studio processing.", job.id, e)
 
-    # 2. Guarantee all images are watermark-free, 1080p, and 98% 4:4:4 studio quality
-    try:
-        from app.services.anti_ai_processor import postprocess_batch
-        postprocess_batch(image_paths)
-    except Exception as e:
-        logger.warning("Job %s: studio postprocessing note: %s", job.id, e)
+    # 2. Local studio postprocessing fallback if Colab was not used
+    # (upscale_images_via_colab already applied watermark crop and 4:4:4 studio encoding)
+    if not upscaled_via_colab:
+        try:
+            from app.services.anti_ai_processor import postprocess_batch
+            postprocess_batch(image_paths, skip_colab=True)
+        except Exception as e:
+            logger.warning("Job %s: studio postprocessing note: %s", job.id, e)
 
     # If job has multiple prompt versions (e.g. 1 per concept), link each output to its corresponding PV
     pv_result = await db.execute(

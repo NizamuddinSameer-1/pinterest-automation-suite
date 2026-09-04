@@ -65,7 +65,7 @@ def _resolve_colab_url() -> str | None:
     return None
 
 
-def _try_colab_upscale(image_bytes: bytes, colab_url: str) -> bytes | None:
+def _try_colab_upscale(image_bytes: bytes, colab_url: str, filename: str = "input.jpg") -> bytes | None:
     """
     Query Google Colab GPU running 4x-UltraSharp (Fine-Tuned for UGC Realism & Micro-Textures).
     Recovers authentic fabric weave, clothing stitches, and skin pores without plastic smoothing.
@@ -78,9 +78,9 @@ def _try_colab_upscale(image_bytes: bytes, colab_url: str) -> bytes | None:
         endpoint = f"{endpoint}/upscale"
 
     try:
-        logger.info("📡 [AI UPSCALER] Sending image to Colab 4x-UltraSharp GPU upscaler: %s", endpoint)
+        logger.info("📡 [AI UPSCALER] Sending '%s' to Colab 4x-UltraSharp GPU upscaler: %s", filename, endpoint)
         with httpx.Client(timeout=60.0) as client:
-            files = {"file": ("input.jpg", image_bytes, "image/jpeg")}
+            files = {"file": (filename, image_bytes, "image/jpeg")}
             resp = client.post(endpoint, files=files)
             if resp.status_code == 200 and len(resp.content) > 5000:
                 logger.info("✅ [AI UPSCALER] 4x-UltraSharp 2K upscaler succeeded (%d KB returned)", len(resp.content) // 1024)
@@ -107,6 +107,7 @@ def postprocess_image(
     image_path: str | Path,
     output_path: str | Path | None = None,
     crop_bottom_px: int | None = None,
+    skip_colab: bool = False,
 ) -> str:
     """
     Post-process an image: remove watermark, enhance UGC micro-details (fabric & skin pores),
@@ -116,6 +117,7 @@ def postprocess_image(
         image_path: Path to the source image.
         output_path: Destination path. If None or same as image_path, overwrites in-place.
         crop_bottom_px: Pixels to crop from bottom. Default (None) is proportional (~8.7%).
+        skip_colab: If True, bypass Colab AI upscaler (prevents duplicate upscaling loops).
 
     Returns:
         str: Absolute or resolved path of the processed image.
@@ -131,12 +133,13 @@ def postprocess_image(
     try:
         raw_bytes = src.read_bytes()
 
-        # Step 1: Check if Google Colab 4x-UltraSharp AI Upscaler is active
-        active_colab_url = _resolve_colab_url()
-        if active_colab_url:
-            upscaled_bytes = _try_colab_upscale(raw_bytes, active_colab_url)
-            if upscaled_bytes:
-                raw_bytes = upscaled_bytes
+        # Step 1: Check if Google Colab 4x-UltraSharp AI Upscaler is active (if not explicitly skipped)
+        if not skip_colab:
+            active_colab_url = _resolve_colab_url()
+            if active_colab_url:
+                upscaled_bytes = _try_colab_upscale(raw_bytes, active_colab_url, filename=src.name)
+                if upscaled_bytes:
+                    raw_bytes = upscaled_bytes
 
         # Step 2: Open with Pillow for processing
         with Image.open(io.BytesIO(raw_bytes)) as img:
@@ -217,12 +220,12 @@ def postprocess_image(
     return str(image_path)
 
 
-def postprocess_batch(image_paths: Sequence[str | Path]) -> list[str]:
+def postprocess_batch(image_paths: Sequence[str | Path], skip_colab: bool = False) -> list[str]:
     """
     Run watermark removal, Lanczos super-resolution, and 4:4:4 studio encoding across a list of images.
     """
     processed: list[str] = []
     for path in image_paths:
-        res = postprocess_image(path)
+        res = postprocess_image(path, skip_colab=skip_colab)
         processed.append(res)
     return processed

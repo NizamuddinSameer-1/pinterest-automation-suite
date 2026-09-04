@@ -1301,7 +1301,7 @@ async def _save_harvest(
         out_path.write_bytes(body)
         try:
             from app.services.anti_ai_processor import postprocess_image
-            postprocess_image(out_path)
+            postprocess_image(out_path, skip_colab=True)
         except Exception as e:
             logger.warning("Anti-AI post-processing error on %s: %s", out_path, e)
 

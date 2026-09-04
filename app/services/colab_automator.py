@@ -313,7 +313,8 @@ async def upscale_images_via_colab(
                         temp_upscaled = p.with_suffix(".colab_tmp.jpg")
                         temp_upscaled.write_bytes(resp.content)
 
-                        postprocess_image(temp_upscaled, p)
+                        # Must skip_colab=True! The image was just enhanced by Colab; avoid duplicate upscaling
+                        postprocess_image(temp_upscaled, p, skip_colab=True)
                         if temp_upscaled.is_file():
                             temp_upscaled.unlink()
 
@@ -339,7 +340,7 @@ async def upscale_images_via_colab(
             if not success:
                 logger.info("🛡️ [UGC FALLBACK] Enhancing Pin %d/%d locally with Optical Micro-Texture & Sensor Grain...", idx, total_pins)
                 from app.services.anti_ai_processor import postprocess_image
-                postprocess_image(p)
+                postprocess_image(p, skip_colab=True)
                 upscaled_paths.append(str(p))
 
     logger.info("🎉 [COLAB 2K ENHANCER] Complete: %d/%d pins verified at 2K Master Quality!", len(upscaled_paths), total_pins)

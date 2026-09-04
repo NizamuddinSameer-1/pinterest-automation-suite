@@ -355,7 +355,7 @@ async def generate_images_via_direct_flow_api(
         out_file.write_bytes(img_bytes)
         try:
             from app.services.anti_ai_processor import postprocess_image
-            postprocess_image(out_file)
+            postprocess_image(out_file, skip_colab=True)
         except Exception as e:
             logger.warning("Anti-AI post-processing error on %s: %s", out_file, e)
 
