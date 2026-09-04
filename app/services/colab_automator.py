@@ -48,22 +48,38 @@ async def get_or_launch_colab(notebook_url: str | None = None) -> tuple[Page | N
     if not url:
         raise ValueError("No COLAB_NOTEBOOK_URL provided in configuration or settings.")
 
-    # 1. Fast path: check cached tunnel file or active tunnel URL
-    cached_candidates = [_ACTIVE_TUNNEL_URL]
-    if TUNNEL_CACHE.exists():
-        try:
-            cached_candidates.append(TUNNEL_CACHE.read_text(encoding="utf-8").strip())
-        except Exception:
-            pass
+    # 1. Fast path: check cached tunnel files, env setting, or active tunnel URL
+    cached_candidates = []
+    if _ACTIVE_TUNNEL_URL:
+        cached_candidates.append(_ACTIVE_TUNNEL_URL)
+
+    conf_upscaler = getattr(settings, "colab_upscaler_url", "").strip()
+    if conf_upscaler and conf_upscaler not in cached_candidates:
+        cached_candidates.append(conf_upscaler)
+
+    for cache_path in [
+        TUNNEL_CACHE,
+        Path("./data/colab_tunnel.txt").resolve(),
+        Path("./data/colab_tunnel_url.txt").resolve(),
+        Path("./data/active_colab_tunnel.txt").resolve(),
+    ]:
+        if cache_path.exists():
+            try:
+                val = cache_path.read_text(encoding="utf-8").strip()
+                if val and val not in cached_candidates:
+                    cached_candidates.append(val)
+            except Exception:
+                pass
 
     for candidate in cached_candidates:
         if candidate and candidate.startswith("http"):
             try:
-                async with httpx.AsyncClient(timeout=3.0) as client:
+                async with httpx.AsyncClient(timeout=2.5) as client:
                     r = await client.get(candidate)
                     if r.status_code == 200:
                         logger.info("⚡ [COLAB AUTOMATOR] Verified active live tunnel: %s", candidate)
                         _ACTIVE_TUNNEL_URL = candidate
+                        TUNNEL_CACHE.write_text(candidate, encoding="utf-8")
                         return _ACTIVE_PAGE, candidate
             except Exception:
                 pass
@@ -104,11 +120,11 @@ async def get_or_launch_colab(notebook_url: str | None = None) -> tuple[Page | N
     logger.info("▶️ [COLAB AUTOMATOR] Triggering Run All on Colab notebook...")
     await _trigger_run_all(page)
 
-    # 5. Wait for the Cloudflare Tunnel URL to appear in the notebook cell output
-    logger.info("⏳ [COLAB AUTOMATOR] Waiting for Real-ESRGAN to load & tunnel URL to appear...")
-    tunnel_url = await _wait_for_tunnel_url(page, timeout_seconds=180)
+    # 5. Wait for the Cloudflare Tunnel URL to appear in the notebook cell output (max 35s)
+    logger.info("⏳ [COLAB AUTOMATOR] Waiting for AI model to load & tunnel URL to appear...")
+    tunnel_url = await _wait_for_tunnel_url(page, timeout_seconds=35)
     if not tunnel_url:
-        raise RuntimeError("Google Colab failed to produce a Cloudflare tunnel URL within 180s.")
+        raise RuntimeError("Google Colab tunnel not responsive within 35s (falling back to fast local studio engine).")
 
     _ACTIVE_TUNNEL_URL = tunnel_url
     TUNNEL_CACHE.write_text(tunnel_url, encoding="utf-8")

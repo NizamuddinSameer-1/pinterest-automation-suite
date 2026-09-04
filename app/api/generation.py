@@ -579,15 +579,17 @@ async def generate_status_endpoint(job_id: str, db: AsyncSession = Depends(get_d
                 pass
             return data
 
-    if data.get("status") == "done":
-        job = await db.get(Job, job_id)
-        if job:
-            from app.api.jobs import _serialize_job_detail
+    # If the job has outputs recorded in the database (even while still in "saving" phase for pin copy),
+    # return serialized job detail immediately so the Creative Lab gallery shows images without waiting!
+    job = await db.get(Job, job_id)
+    if job and (job.current_state in ("OUTPUT_UPLOADED", "PASS", "DONE") or data.get("status") == "done"):
+        from app.api.jobs import _serialize_job_detail
 
-            detail = await _serialize_job_detail(job, db)
-            detail.update({k: v for k, v in data.items() if k != "job_id"})
+        detail = await _serialize_job_detail(job, db)
+        detail.update({k: v for k, v in data.items() if k != "job_id"})
+        if data.get("status") == "done":
             detail["status"] = "done"
-            return detail
+        return detail
 
     return data
 

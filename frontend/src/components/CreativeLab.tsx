@@ -525,11 +525,17 @@ export const CreativeLab: React.FC<CreativeLabProps> = ({
       `⚡ Generating ${started.requested_count} variation(s) via ${backendLabel} — please wait (~30-60s)...` +
         (allowSubjectMismatch ? ' (subject mismatch overridden — style reference only)' : '')
     );
-    const maxPolls = 60; // 5 minutes max
+    const maxPolls = 150; // 10 minutes max with 4s intervals
     for (let i = 0; i < maxPolls; i++) {
-      await new Promise((r) => setTimeout(r, 5000));
+      await new Promise((r) => setTimeout(r, 4000));
       try {
         const status = await api.getGenerationStatus(jobId);
+
+        // Immediate Gallery Display: Show images as soon as outputs are ready (even during pin copy creation)
+        if (status.outputs && status.outputs.length > 0 && (!currentJob?.outputs || currentJob.outputs.length === 0)) {
+          await loadJob(jobId);
+        }
+
         if (status.status === 'done') {
           await loadJob(jobId);
           try {
@@ -552,13 +558,14 @@ export const CreativeLab: React.FC<CreativeLabProps> = ({
           await loadJob(jobId);
           return;
         }
-        const phase = status.status === 'saving' ? 'Saving images & writing pin copy' : 'Generating';
-        setActionMessage(`⚡ ${phase}... (${(i + 1) * 5}s elapsed)`);
+        const phase = status.status === 'saving' ? (status.message || 'Saving 2K images & writing pin copy') : 'Generating in Google Flow';
+        setActionMessage(`⚡ ${phase}... (${(i + 1) * 4}s elapsed)`);
       } catch {
         // Network hiccup, keep polling
       }
     }
-    alert('Generation timed out after 5 minutes. Check the backend logs.');
+    setActionMessage('⚠️ Generation took longer than usual; checking for completed images in gallery...');
+    await loadJob(jobId);
   };
 
   // ── Helper: Open Google Flow in new tab & copy 13-section prompt ──
