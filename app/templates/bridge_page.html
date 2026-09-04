@@ -140,7 +140,7 @@
         {% if hero_look %}
         <div class="hero-frame">
           <img src="{{ hero_look.image_url or hero_look.data_uri }}" alt="{{ product_name }} - {{ hero_look.angle_badge }}" loading="eager" width="640" height="960" />
-          <div class="hero-tag">{{ hero_look.angle_badge }}</div>
+          <span class="hero-tag">{{ hero_look.angle_badge }}</span>
         </div>
         {% endif %}
 
@@ -159,13 +159,13 @@
 
           <div class="price-row">
             <div>
-              <div style="font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-muted); margin-bottom: 2px;">Verified Amazon Price</div>
+              <div style="font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.03em; color: var(--ink-muted); margin-bottom: 2px;">Verified Amazon Price</div>
               <span class="price-amount">{{ price_display }}</span>
               <span class="prime-badge">Prime Delivery</span>
             </div>
             {% if brand %}
             <div style="text-align: right;">
-              <div style="font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--ink-muted);">Brand</div>
+              <div style="font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.03em; color: var(--ink-muted);">Brand</div>
               <div style="font-family: var(--font-display); font-size: 18px; font-weight: 600; color: var(--ink);">{{ brand }}</div>
             </div>
             {% endif %}
@@ -189,7 +189,7 @@
         <!-- Above-The-Fold Quick Comparison Matrix -->
         {% if comparison_matrix and comparison_matrix.tiers %}
         <div class="comparison-section">
-          <h3>{{ comparison_matrix.title or 'Feature & Spec Comparison' }}</h3>
+          <h2>{{ comparison_matrix.title or 'Feature & Spec Comparison' }}</h2>
           <div class="comparison-grid">
             {% for item in comparison_matrix.tiers %}
             <div class="comp-card {% if item.is_featured %}featured-card{% endif %}">
@@ -272,10 +272,10 @@
             </div>
 
             <!-- Look Lifestyle Photo -->
-            <div class="look-image-card">
+            <figure class="look-image-frame">
               <img src="{{ look.image_url or look.data_uri }}" alt="{{ product_name }} - {{ look.look_title }}" loading="lazy" width="640" height="960" />
-              <div class="look-angle-chip">{{ look.angle_badge }}</div>
-            </div>
+              <span class="look-angle-chip">{{ look.angle_badge }}</span>
+            </figure>
 
             <!-- Look Editorial Narrative -->
             <p>{{ look.look_story }}</p>
@@ -328,7 +328,7 @@
           <h2>Honest Assessment: Strengths vs. Considerations</h2>
           <div class="pros-cons-container">
             <div class="pros-card">
-              <h4>Key Strengths</h4>
+              <h3>Key Strengths</h3>
               <ul class="pros-list">
                 {% for pro in pros_cons.pros %}
                 <li>{{ pro }}</li>
@@ -337,7 +337,7 @@
             </div>
 
             <div class="cons-card">
-              <h4>Considerations</h4>
+              <h3>Considerations</h3>
               <ul class="cons-list">
                 {% for con in pros_cons.cons %}
                 <li>{{ con }}</li>
@@ -352,7 +352,7 @@
           <h2>Who Should Buy This (and Who Should Pass)</h2>
           <div class="persona-container">
             <div class="persona-card buy-card">
-              <h4>✅ Ideal Match For:</h4>
+              <h3>✅ Ideal Match For:</h3>
               <ul class="persona-list">
                 {% for item in buyer_persona.who_should_buy %}
                 <li>{{ item }}</li>
@@ -361,7 +361,7 @@
             </div>
 
             <div class="persona-card skip-card">
-              <h4>⚠️ Consider Alternatives If:</h4>
+              <h3>⚠️ Consider Alternatives If:</h3>
               <ul class="persona-list">
                 {% for item in buyer_persona.who_should_skip %}
                 <li>{{ item }}</li>
@@ -428,7 +428,7 @@
       <div class="sidebar-sticky">
         
         <!-- Quick Buy Widget -->
-        <div class="sidebar-widget">
+        <div class="sidebar-widget" style="padding: 24px;">
           <h4>Curated In-Stock Deal</h4>
           {% if hero_look %}
           <div class="sidebar-prod-img">
@@ -445,11 +445,11 @@
 
         <!-- Sidebar Related Guides -->
         {% if related_lookbooks %}
-        <div class="sidebar-widget" style="background:#FAF9F6;">
+        <div class="sidebar-widget sidebar-alt" style="padding: 24px; background:#FAF9F6;">
           <h4 style="font-size:15px; margin-bottom:12px;">Related Guides</h4>
           {% for rel in related_lookbooks %}
           <div style="margin-bottom:12px; padding-bottom:10px; border-bottom:1px solid var(--border);">
-            <div style="font-size:10.5px; font-weight:700; text-transform:uppercase; color:var(--accent);">{{ rel.category }}</div>
+            <div style="font-size:11.5px; font-weight:700; text-transform:uppercase; color:var(--accent);">{{ rel.category }}</div>
             <a href="{{ rel.local_url or rel.url }}" style="font-size:13px; font-weight:600; color:var(--ink); line-height:1.4; display:block;">
               {{ rel.title }}
             </a>
@@ -459,7 +459,7 @@
         {% endif %}
 
         <!-- Editorial Guarantee Widget -->
-        <div class="sidebar-widget" style="background:#FAF9F6;">
+        <div class="sidebar-widget sidebar-alt" style="padding: 24px; background:#FAF9F6;">
           <h4 style="font-size:15px; margin-bottom:8px;">Editorial Guarantee</h4>
           <p style="font-size:13px; color:var(--ink-soft); line-height:1.55; margin:0;">
             Every product featured on SmartPickr undergoes comprehensive editorial analysis and verified manufacturer specification review to ensure authentic recommendations.
