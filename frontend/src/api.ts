@@ -879,7 +879,82 @@ export const api = {
     }
     return res.json();
   },
+
+  // ── Trend Research Radar ─────────────────────
+  getTrends: async (category?: string): Promise<{ success: boolean; category: string; count: number; trends: TrendDossier[] }> => {
+    const params = new URLSearchParams();
+    if (category && category !== 'all') params.set('category', category.toLowerCase());
+    const qs = params.toString();
+    const res = await fetch(`${API_BASE}/research/trends${qs ? `?${qs}` : ''}`);
+    if (!res.ok) throw new Error('Failed to fetch trend radar');
+    return res.json();
+  },
+  queryTrend: async (query: string, category: string = 'fashion'): Promise<TrendDossier> => {
+    const res = await fetch(`${API_BASE}/research/query`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query, category }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(err.detail || 'Failed to analyze trend query');
+    }
+    const data = await res.json();
+    return data.dossier;
+  },
+  launchTrendCampaign: async (params: {
+    asin: string;
+    title: string;
+    price: number;
+    category?: string;
+    image_url?: string;
+    trend_label?: string;
+    scene_setting?: string;
+    board_name?: string;
+    affiliate_url?: string;
+  }): Promise<{ status: string; job_id: string; product_id: string; board_name?: string; message: string }> => {
+    const res = await fetch(`${API_BASE}/research/launch-campaign`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(err.detail || 'Failed to launch trend campaign');
+    }
+    return res.json();
+  },
 };
+
+export interface TrendProduct {
+  asin: string;
+  title: string;
+  price: number;
+  rating?: number;
+  review_count?: number;
+  image_url: string;
+  affiliate_url: string;
+  smart_url?: string;
+  commission_rate?: string;
+  prime_eligible?: boolean;
+  demo_only?: boolean;
+}
+
+export interface TrendDossier {
+  id: string;
+  title: string;
+  category: string;
+  heat_level: 'breakout' | 'rising' | 'evergreen' | string;
+  heat_badge: string;
+  opportunity_score: number;
+  tier: string;
+  aesthetic_vibe: string;
+  outfit_or_scene: string;
+  recommended_board: string;
+  related_queries: string[];
+  matched_products: TrendProduct[];
+  discovered_at?: string;
+}
 
 export interface AmazonItem {
   asin: string;

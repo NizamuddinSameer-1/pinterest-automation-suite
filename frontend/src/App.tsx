@@ -5,6 +5,7 @@ import { CreativeLab } from './components/CreativeLab';
 import { PinComposer } from './components/PinComposer';
 import { ProductLibrary } from './components/ProductLibrary';
 import { VaultHub } from './components/VaultHub';
+import { TrendRadar } from './components/TrendRadar';
 
 export function App() {
   const [activeTab, setActiveTab] = useState<string>('dashboard');
@@ -23,6 +24,13 @@ export function App() {
           <Dashboard 
             setActiveTab={setActiveTab} 
             setSelectedJobId={setSelectedJobId} 
+          />
+        )}
+        {activeTab === 'research' && (
+          <TrendRadar 
+            setActiveTab={setActiveTab}
+            setSelectedJobId={setSelectedJobId}
+            setSelectedProductId={setSelectedProductId}
           />
         )}
         {activeTab === 'lab' && (

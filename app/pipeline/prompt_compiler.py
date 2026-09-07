@@ -296,7 +296,7 @@ def compile_prompt(
     env_block = f"Environment: {location} with {clutter} lived-in clutter and believable real-world asymmetry."
     if bg_elements:
         env_block += f" Background details include: {', '.join(bg_elements)}."
-    env_block += " Avoid empty showroom staging or artificial sterile backgrounds."
+    env_block += " Authentic casual domestic reality with natural room textures and organic lived-in surroundings."
 
     # 4. OPTICAL PHYSICS & CAMERA REALISM
     cam_dna = visual_dna.get("camera_dna", {})
@@ -332,7 +332,7 @@ def compile_prompt(
     lighting_block = (
         f"Lighting: Authentic {light_source} lighting with {warmth} color balance and {contrast} contrast.{palette_text} "
         f"Realistic light bounce and natural soft shadows. Optical specs: {sharpness}, {noise}, {hdr}, "
-        "natural focal falloff without artificial digital blur or fake studio rim lights."
+        "natural focal falloff with organic lens depth and authentic ambient falloff."
     )
 
     # 5. ASSEMBLE SECTIONS

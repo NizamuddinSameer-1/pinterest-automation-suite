@@ -198,20 +198,22 @@ async def record_generation_outputs(
     product_data = _product_to_dict(product)
     scene_data = json.loads(job.scene_json) if job.scene_json else {}
 
-    from app.pipeline.pinterest_seo import generate_pin_seo
+    from app.pipeline.pinterest_seo import generate_batch_pins_seo
 
     try:
-        seo_data = await generate_pin_seo(
+        batch_seo = await generate_batch_pins_seo(
             product=product_data,
             scene=scene_data,
+            image_paths=image_paths,
             trend_label=ref.trend_label,
         )
     except Exception as e:  # noqa: BLE001 — surfaced to the caller, never papered over
         logger.error("SEO generation failed for job %s: %s", job.id, e)
         raise PinCopyUnavailable(str(e), [o.id for o in outputs]) from e
 
-    board = seo_data.get("board_suggestion") or settings.default_board_name
-    base_title = seo_data["title"]
+    primary_seo = batch_seo[0] if batch_seo else {}
+    board = primary_seo.get("board_suggestion") or settings.default_board_name
+    base_title = primary_seo.get("title") or product_data.get("name", "Curated Find")
 
     # ── UGC Lookbook Bridge Page ──────────────────
     # Lookbooks are NOT created automatically during generation. Lookbook creation
@@ -278,14 +280,20 @@ async def record_generation_outputs(
     variations: list[dict[str, Any]] = []
     pins: list[PinDraft] = []
     for idx, out in enumerate(outputs, 1):
+        pin_seo = batch_seo[idx - 1] if idx - 1 < len(batch_seo) else primary_seo
+        pin_title = pin_seo.get("title") or base_title
+        pin_desc = pin_seo.get("description") or primary_seo.get("description", "")
+        pin_keywords = pin_seo.get("keywords") or primary_seo.get("keywords", [])
+        pin_board = pin_seo.get("board_suggestion") or board
+
         pin = PinDraft(
             output_id=out.id,
             job_id=job.id,
-            title=base_title if idx == 1 else f"{base_title} (Look #{idx})",
-            description=seo_data["description"],
-            keywords=json.dumps(seo_data.get("keywords", [])),
+            title=pin_title,
+            description=pin_desc,
+            keywords=json.dumps(pin_keywords),
             destination_url=bridge_url,
-            board_name=board,
+            board_name=pin_board,
             status="draft",
         )
         db.add(pin)
@@ -300,7 +308,7 @@ async def record_generation_outputs(
             "title": pin.title,
         })
 
-    _sync_vault(job, product, pins, seo_data, scene_data, prompt_version)
+    _sync_vault(job, product, pins, primary_seo, scene_data, prompt_version)
 
     logger.info(
         "Job %s: recorded %d output(s) from %s with pin drafts on board %r",
@@ -314,7 +322,7 @@ async def record_generation_outputs(
         "variations": variations,
         "board_name": board,
         "title": base_title,
-        "description": seo_data["description"],
+        "description": primary_seo.get("description", ""),
     }
 
 
@@ -345,7 +353,7 @@ def _sync_vault(
                 job_id=job.id,
                 title=pin.title,
                 description=pin.description,
-                keywords=seo_data.get("keywords", []),
+                keywords=json.loads(pin.keywords) if pin.keywords else [],
                 destination_url=pin.destination_url,
                 board_name=pin.board_name,
                 status="draft",

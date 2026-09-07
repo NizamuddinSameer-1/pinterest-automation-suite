@@ -148,6 +148,7 @@ async def generate_lookbook_html(
             product_data=product_data,
             scene_data=scene_data,
             variations_count=variations_count,
+            image_paths=image_paths,
         )
 
     # 2. Create clean canonical slug & paths
@@ -259,6 +260,7 @@ async def generate_lookbook_html(
         author_name=copy_data.get("author_name", default_author),
         author_title=copy_data.get("author_title", "Product Research & Editorial Staff"),
         quick_verdict=copy_data.get("quick_verdict", {}),
+        tldr_card=copy_data.get("tldr_card", {}),
         story_intro=copy_data.get("story_intro", ""),
         objections_faq=copy_data.get("objections_faq", []),
         staged_ctas=copy_data.get("staged_ctas", {}),

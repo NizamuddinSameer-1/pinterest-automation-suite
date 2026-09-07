@@ -51,6 +51,9 @@ _GENERATION_URL_MARKERS = (
     "generate",      # batchGenerateImages, generateImage, :generate
     "imagefx",       # runImageFx and friends
     "texttoimage",
+    "batchexecute",  # Google Flow / AiSandbox Angular frontend RPC endpoint
+    "flowmedia",
+    "aisandbox",
 )
 
 #: …and is *not* a generation call if its path carries one of these, however many
@@ -74,7 +77,7 @@ _LISTING_URL_MARKERS = (
 _INLINE_IMAGE_KEYS = ("encodedimage", "bytesbase64encoded", "data", "imagebytes", "image")
 
 #: Keys whose string value is a URL the image can be downloaded from.
-_MEDIA_URL_KEYS = ("imageuri", "url", "mediaurl", "fifeurl", "servingurl", "downloaduri")
+_MEDIA_URL_KEYS = ("imageuri", "url", "mediaurl", "fifeurl", "servingurl", "downloaduri", "asb")
 
 #: Base64 prefixes for the formats Flow returns (JPEG, PNG, WebP).
 _B64_IMAGE_PREFIXES = ("/9j/", "iVBORw0KGgo", "UklGR")
@@ -184,17 +187,32 @@ def _decode_inline(value: str) -> bytes | None:
 
 def harvest_media(data: Any, into: MediaHarvest | None = None) -> MediaHarvest:
     """
-    Collect inline image bytes and image URLs from a Flow JSON payload.
+    Collect inline image bytes and image URLs from a Flow JSON payload or raw response.
 
-    Flow answers `batchGenerateImages` with a `media` list whose entries carry the
-    bytes inline *or* only a `getMediaUrlRedirect` link. The URL case used to fall
-    through to "No image data found", which reads like a generation failure when it
-    is really a second fetch nobody made — so URLs are collected here and the
-    caller downloads them with credentials still in scope.
+    Flow answers `batchGenerateImages` or `batchexecute` with inline bytes,
+    `getMediaUrlRedirect` links, or `/asb/` image endpoints. When `/asb/` URLs
+    carry preview sizing like `=s512-rw`, they are normalized to `=s0` so the
+    original uncompressed full-resolution render is always downloaded.
 
     Order is preserved: entry *n* of the response stays variation *n*.
     """
     harvest = into if into is not None else MediaHarvest()
+    import re
+
+    def _clean_url(u: str) -> str:
+        if "/asb/" in u and "=s" in u:
+            return re.sub(r"=s\d+.*$", "=s0", u)
+        return u
+
+    if isinstance(data, str):
+        for u in re.findall(r'https://flow\.google\.com/asb/[^\s"\'\\]+', data):
+            cu = _clean_url(u)
+            if cu not in harvest.urls:
+                harvest.urls.append(cu)
+        for u in re.findall(r'https://[^\s"\'\\]*?getMediaUrlRedirect[^\s"\'\\]*', data):
+            if u not in harvest.urls:
+                harvest.urls.append(u)
+        return harvest
 
     if isinstance(data, dict):
         for key, value in data.items():
@@ -205,11 +223,17 @@ def harvest_media(data: Any, into: MediaHarvest | None = None) -> MediaHarvest:
                     if decoded is not None:
                         harvest.inline.append(decoded)
                         continue
-                if value.startswith("http") and (
+                if "/asb/" in value:
+                    for u in re.findall(r'https://flow\.google\.com/asb/[^\s"\'\\]+', value):
+                        cu = _clean_url(u)
+                        if cu not in harvest.urls:
+                            harvest.urls.append(cu)
+                elif value.startswith("http") and (
                     "getMediaUrlRedirect" in value or key_lower in _MEDIA_URL_KEYS
                 ):
-                    if value not in harvest.urls:
-                        harvest.urls.append(value)
+                    cu = _clean_url(value)
+                    if cu not in harvest.urls:
+                        harvest.urls.append(cu)
             elif isinstance(value, (dict, list)):
                 harvest_media(value, harvest)
     elif isinstance(data, list):

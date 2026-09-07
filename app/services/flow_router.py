@@ -76,14 +76,27 @@ def _load_state() -> dict:
 
 
 def _save_state(state: dict) -> None:
-    """Write the persistent router state atomically."""
+    """Write the persistent router state atomically with Windows/OneDrive fallback."""
     try:
         STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        content = json.dumps(state, indent=2)
         tmp = STATE_FILE.with_suffix(".tmp")
-        tmp.write_text(json.dumps(state, indent=2), encoding="utf-8")
-        tmp.replace(STATE_FILE)
+        tmp.write_text(content, encoding="utf-8")
+        try:
+            tmp.replace(STATE_FILE)
+        except PermissionError:
+            # Windows / OneDrive file locking fallback
+            import time
+            time.sleep(0.05)
+            try:
+                tmp.replace(STATE_FILE)
+            except Exception:
+                STATE_FILE.write_text(content, encoding="utf-8")
+                if tmp.exists():
+                    tmp.unlink(missing_ok=True)
     except Exception as e:
         logger.error("Failed to save flow router state to %s: %s", STATE_FILE, e)
+
 
 
 def get_project_pool() -> list[str]:

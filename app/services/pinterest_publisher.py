@@ -128,6 +128,31 @@ SEL_BOARD_OPTION = (
     'div[role="option"]',
     '[data-test-id*="boardWithoutSection"]',
 )
+SEL_CREATE_BOARD_BTN = (
+    '[data-test-id*="create-board"]',
+    'div[role="button"]:has-text("Create board")',
+    'button:has-text("Create board")',
+    'div:has-text("Create board")',
+    '[aria-label*="Create board" i]',
+)
+SEL_CREATE_BOARD_INPUT = (
+    '[role="dialog"] [data-test-id*="board-name"] input',
+    '[role="dialog"] input[id*="board-name"]',
+    '[role="dialog"] input[placeholder*="Like" i]',
+    '[role="dialog"] input[placeholder*="Name" i]',
+    '[role="dialog"] input[type="text"]',
+    'input[id*="board-name"]',
+)
+SEL_CREATE_BOARD_SECRET_CHECKBOX = (
+    '[role="dialog"] input[type="checkbox"]',
+    '[role="dialog"] [data-test-id*="secret"] input',
+)
+SEL_CREATE_BOARD_SUBMIT = (
+    '[role="dialog"] [data-test-id*="board-create"]',
+    '[role="dialog"] button:has-text("Create")',
+    '[role="dialog"] button[type="submit"]',
+    'button:text-is("Create")',
+)
 SEL_SCHEDULE_TOGGLE = (
     '[data-test-id*="schedule"] input[type="checkbox"]',
     'input[type="checkbox"][id*="schedule" i]',
@@ -639,19 +664,107 @@ class PinterestBuilder:
         except (OSError, ValueError) as e:
             logger.debug("Could not cache board names: %s", e)
 
-    async def choose_board(self, board_name: str) -> str:
+    async def _create_board(self, board_name: str, *, profile_id: str = "default") -> bool:
         """
-        Select exactly `board_name`, or raise listing the boards that do exist.
+        Attempt to create a new board via Pinterest's dropdown 'Create board' action.
+        Returns True if created and selected, False otherwise.
+        """
+        clean_name = (board_name or "").strip()
+        if not clean_name:
+            return False
 
-        There is deliberately no "first available board" fallback: that fallback is
-        why pins could land on an unrelated board without anyone being told.
+        logger.info("Triggering automatic board creation for %r (profile: %s)", clean_name, profile_id)
 
-        The order matters. The menu is opened and the *unfiltered* list is waited
-        for first, so that every later decision is made against a list that is
-        known to have rendered. Only then is the name typed to narrow it. The old
-        version typed immediately and read the rows once, ~2 s after opening the
-        menu, so a list that had not arrived yet came back empty and was reported
-        as "Boards offered: (none readable)" — a missing board, which it was not.
+        # 1. Look for the "Create board" button/item in the dropdown
+        create_btn = await self._find(SEL_CREATE_BOARD_BTN, timeout_ms=3000)
+        if create_btn is None:
+            # If the search filter has text, clear it to reveal the button
+            search = await self._find(SEL_BOARD_SEARCH, timeout_ms=2000)
+            if search is not None:
+                try:
+                    await search.fill("", timeout=2000)
+                    await self.page.wait_for_timeout(400)
+                    create_btn = await self._find(SEL_CREATE_BOARD_BTN, timeout_ms=3000)
+                except Exception:
+                    pass
+
+        if create_btn is None:
+            logger.warning("Could not find 'Create board' button in dropdown")
+            return False
+
+        try:
+            await create_btn.click(timeout=5000)
+            await self.page.wait_for_timeout(800)
+        except Exception as e:
+            logger.warning("Failed to click 'Create board' button: %s", e)
+            return False
+
+        # 2. Find the board name input in the creation modal/dialog
+        input_loc = await self._find(SEL_CREATE_BOARD_INPUT, timeout_ms=6000)
+        if input_loc is not None:
+            try:
+                await input_loc.fill(clean_name, timeout=5000)
+            except Exception:
+                try:
+                    await input_loc.click(timeout=3000)
+                    await self.page.keyboard.press("Control+A")
+                    await self.page.keyboard.press("Delete")
+                    await insert_text(self.page, clean_name)
+                except Exception as e:
+                    logger.warning("Failed to type board name into modal input: %s", e)
+                    return False
+            await self.page.wait_for_timeout(400)
+
+            # Ensure the secret board checkbox is UNCHECKED (we want public boards)
+            secret_cb = await self._find(SEL_CREATE_BOARD_SECRET_CHECKBOX, timeout_ms=2000)
+            if secret_cb is not None:
+                try:
+                    if await secret_cb.is_checked():
+                        await secret_cb.uncheck(timeout=2000)
+                except Exception:
+                    pass
+
+            # 3. Submit board creation
+            submit_btn = await self._find(SEL_CREATE_BOARD_SUBMIT, timeout_ms=5000)
+            if submit_btn is not None:
+                try:
+                    await submit_btn.click(timeout=5000)
+                    await self.page.wait_for_timeout(2000)
+                except Exception as e:
+                    logger.warning("Failed to click 'Create' submit button in modal: %s", e)
+                    return False
+
+        # 4. Verify the dropdown now reflects the newly created board
+        button = await self._find(SEL_BOARD_BUTTON, timeout_ms=5000)
+        shown = _squash(await button.inner_text()) if button else ""
+        norm_target = _board_catalog.normalise(clean_name)
+        norm_shown = _board_catalog.normalise(shown)
+        if norm_target in norm_shown or norm_shown in norm_target:
+            logger.info("Board %r confirmed created and selected (dropdown shows %r)", clean_name, shown)
+        else:
+            logger.info("Board dropdown shows %r after create attempt for %r", shown, clean_name)
+
+        # 5. Persist to board catalog so future pre-flights and runs know this board exists
+        try:
+            current_cat = _board_catalog.read_catalog(profile_id=profile_id)
+            updated_boards = list(current_cat.boards)
+            if clean_name not in updated_boards:
+                updated_boards.append(clean_name)
+            _board_catalog.write_catalog(updated_boards, source="create_board", profile_id=profile_id)
+        except Exception as e:
+            logger.warning("Could not cache newly created board %r: %s", clean_name, e)
+
+        return True
+
+    async def choose_board(
+        self,
+        board_name: str,
+        *,
+        auto_create: bool = True,
+        profile_id: str = "default",
+    ) -> str:
+        """
+        Select `board_name`, fuzzy-match to an existing board, or auto-create it.
         """
         button = await self._find(SEL_BOARD_BUTTON)
         if button is None:
@@ -677,6 +790,22 @@ class PinterestBuilder:
         logger.info("Boards in the dropdown: %s", ", ".join(available[:15]))
 
         clicked = await self._click_board_row(board_name)
+
+        # If not clicked directly, try fuzzy matching against existing boards
+        if not clicked:
+            fuzzy_match = _board_catalog.find_best_board_match(board_name, available)
+            if fuzzy_match:
+                logger.info("Board %r not found directly; matched existing board %r. Clicking it.", board_name, fuzzy_match)
+                clicked = await self._click_board_row(fuzzy_match)
+                if clicked:
+                    board_name = fuzzy_match
+
+        # If still not clicked, attempt automatic board creation if enabled
+        if not clicked and auto_create:
+            created = await self._create_board(board_name, profile_id=profile_id)
+            if created:
+                logger.info("Successfully created and selected board: %s", board_name)
+                return board_name
 
         if not clicked:
             # The visible list is virtualised, so a board can exist and still not
@@ -1137,7 +1266,11 @@ async def _process_one(builder: PinterestBuilder, spec: PinSpec) -> PinResult:
     await builder.set_title(spec.title)
     await builder.set_description(spec.description)
     await builder.set_link(spec.link)
-    await builder.choose_board(board)
+    used_board = await builder.choose_board(
+        board,
+        auto_create=getattr(settings, "auto_create_boards", True),
+        profile_id=spec.profile_id or "default",
+    )
 
     stamp = None
     if scheduled:
@@ -1151,7 +1284,7 @@ async def _process_one(builder: PinterestBuilder, spec: PinSpec) -> PinResult:
         status="scheduled" if scheduled else "published",
         confirmed_by=confirmed_by,
         live_url=live_url,
-        board_used=board,
+        board_used=used_board,
         scheduled_for=spec.scheduled_for,
         scheduled_local=stamp,
         alerts=await builder.alerts(),

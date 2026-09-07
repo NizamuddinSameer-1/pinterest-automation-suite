@@ -278,22 +278,36 @@ async def inspect_database() -> dict[str, Any]:
 
 
 async def inspect_llm_stack() -> dict[str, Any]:
-    """Probe configured LLM providers for latency and quota availability."""
+    """Probe configured LLM providers for latency and quota availability (both lanes)."""
     t0 = time.time()
     result = {"name": "LLM Provider Stack", "subsystem": SUBSYSTEM_LLM, "status": "PASS", "latency_ms": 0, "providers": {}}
     try:
-        from app.providers.llm import llm
-        
-        # Test basic text generation ping
+        from app.providers.llm import content_llm, llm
+
+        # Test basic text generation ping (reference/vision lane)
         test_prompt = "Reply with 'OK'."
         resp = await asyncio.wait_for(llm.generate_text(test_prompt), timeout=15)
         result["latency_ms"] = int((time.time() - t0) * 1000)
         result["ping_response"] = resp.strip()[:50]
+        content_key_present = bool(
+            settings.content_openrouter_api_key
+            or settings.content_gemini_api_key
+            or settings.content_opencode_api_key
+        )
+        try:
+            content_resp = await asyncio.wait_for(content_llm.generate_text(test_prompt), timeout=15)
+            content_status = f"OK ({content_resp.strip()[:20]})"
+        except Exception as ce:
+            content_status = f"FAIL: {ce}"
+            if result["status"] == "PASS":
+                result["status"] = "WARN"
         result["providers"] = {
             "gemini": bool(settings.gemini_api_key),
             "opencode": bool(settings.opencode_api_key),
             "openrouter": bool(settings.openrouter_api_key),
             "text_model": settings.openrouter_model if settings.openrouter_api_key else settings.gemini_model,
+            "content_lane_configured": content_key_present,
+            "content_lane": content_status,
         }
     except Exception as e:
         result["status"] = "FAIL" if "429" in str(e) or "quota" in str(e).lower() else "WARN"
