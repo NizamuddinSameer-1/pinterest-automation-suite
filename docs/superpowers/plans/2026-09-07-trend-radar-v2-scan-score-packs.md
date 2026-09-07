@@ -68,9 +68,9 @@ def test_default_weights_sum_to_one():
     assert abs(sum(DEFAULT_WEIGHTS.values()) - 1.0) < 1e-9
 
 
-def test_worked_example_scores_73_point_9_tier_a():
+def test_worked_example_scores_74_point_0_tier_a():
     out = score_trend(demand=82, money=74, winnability=61)
-    assert out["score"] == 73.9
+    assert out["score"] == 74.0
     assert out["tier"] == "A"
     assert out["breakdown"] == {
         "demand": 82, "money": 74, "winnability": 61,
