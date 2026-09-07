@@ -435,6 +435,7 @@ async def generate_bridge_copy(
     scene_data: dict[str, Any] | None = None,
     variations_count: int = 4,
     image_paths: list[str | Path] | None = None,
+    keyword_pack: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """
     Generates high-converting, honest editorial review copy grounded strictly
@@ -476,6 +477,10 @@ async def generate_bridge_copy(
         "verified_review_count": reviews if reviews else None,
         "taxonomy_class": ctx["klass_key"],
     }
+    if keyword_pack:
+        product_brief["keyword_pack_primary"] = keyword_pack.get("primary", "")
+        product_brief["keyword_pack_tails"] = list(keyword_pack.get("long_tails") or [])[:8]
+        product_brief["keyword_pack_hooks"] = list(keyword_pack.get("hooks") or [])[:8]
 
     system_prompt = (
         f"You are a senior product shopping editor and consumer research specialist writing for {author_name}.\n"

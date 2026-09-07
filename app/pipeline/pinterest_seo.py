@@ -163,6 +163,7 @@ async def generate_pin_seo(
     total_variations: int = 1,
     existing_boards: list[str] | None = None,
     profile_id: str | None = None,
+    keyword_pack: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """
     Generate Pinterest SEO metadata for a Pin.
@@ -179,6 +180,13 @@ async def generate_pin_seo(
     boards_str = ", ".join(f'"{b}"' for b in existing_boards) if existing_boards else "None recorded yet"
 
     framework = FRAMEWORKS[(variation_index - 1) % len(FRAMEWORKS)]
+    prompt_seed = ""
+    if keyword_pack:
+        primary = str(keyword_pack.get("primary") or "").strip()
+        tails = [str(t) for t in (keyword_pack.get("long_tails") or []) if str(t).strip()]
+        if primary:
+            seed_hint = primary + (" | " + ", ".join(tails[:3]) if tails else "")
+            prompt_seed = f"Pack primary keyword (use verbatim where natural): {seed_hint}\n\n"
     product_name = product.get("name") or "Curated Item"
     aesthetic = trend_label or product.get("category") or "Aesthetic"
 
@@ -193,7 +201,7 @@ async def generate_pin_seo(
                     framework_instruction=framework["instruction"],
                     existing_boards=boards_str,
                 )
-                user_prompt = (f"This is variation #{variation_index} of {total_variations} for '{product_name}'.\n"
+                user_prompt = prompt_seed + (f"This is variation #{variation_index} of {total_variations} for '{product_name}'.\n"
                     f"Target Year: 2026.\n"
                     f"Aesthetic / Trend: {aesthetic}.\n"
                     f"Inspect the attached photo and generate photo-grounded Pinterest SEO using the [Aesthetic] + [Item] + [Amazon Signal] + [Year] formula and 2-sentence description rule.\n\n"
@@ -231,7 +239,7 @@ async def generate_pin_seo(
         framework_instruction=framework["instruction"],
         existing_boards=boards_str,
     )
-    prompt = (f"Generate Pinterest SEO metadata for variation #{variation_index} of {total_variations} for this affiliate Pin.\n"
+    prompt = prompt_seed + (f"Generate Pinterest SEO metadata for variation #{variation_index} of {total_variations} for this affiliate Pin.\n"
         f"Target Year: 2026.\n"
         f"Aesthetic / Trend: {aesthetic}.\n"
         f"Follow the [Aesthetic] + [Item] + [Amazon Signal] + [Year] formula and 2-sentence description rule.\n\n"
