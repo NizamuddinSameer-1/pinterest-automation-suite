@@ -145,3 +145,35 @@ async def test_dossier_carries_score_breakdown_and_pack(monkeypatch):
     assert first["keyword_pack"]["primary"]
     assert len(first["keyword_pack"]["hooks"]) >= 1
     assert first["sources"][0]["source"] == "shopping"
+
+
+@pytest.mark.asyncio
+async def test_custom_query_uses_cache_second_time(monkeypatch, tmp_path):
+    """Second identical query within 24h serves cache (no source calls)."""
+    import app.services.trend_research as mod
+
+    calls = {"n": 0}
+
+    async def _counting_scan(seed_query, category):
+        calls["n"] += 1
+        from app.services.trend_sources import SourceSignal
+        import datetime as _dt
+        return [SourceSignal(source="shopping", status="fresh",
+                             queries=[seed_query], demand_hint=70.0,
+                             fetched_at=_dt.datetime.now(
+                                 _dt.timezone.utc).isoformat())]
+
+    async def _no_match(*a, **kw):
+        return []
+
+    monkeypatch.setattr(mod, "_scan_seed_signals", _counting_scan)
+    monkeypatch.setattr(mod, "match_amazon_products_for_trend", _no_match)
+    monkeypatch.setattr(mod, "_trend_cache_dir",
+                        lambda: tmp_path / "trend_cache")
+    (tmp_path / "trend_cache").mkdir(parents=True, exist_ok=True)
+
+    first = await mod.analyze_custom_trend_query("coastal cowgirl", "fashion")
+    second = await mod.analyze_custom_trend_query("coastal cowgirl", "fashion")
+    assert calls["n"] == 1
+    assert first["keyword_pack"]["primary"]
+    assert second["title"] == first["title"]

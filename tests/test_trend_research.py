@@ -86,12 +86,24 @@ async def test_discover_trends_radar():
 
 
 @pytest.mark.asyncio
-async def test_analyze_custom_trend_query():
+async def test_analyze_custom_trend_query(tmp_path):
     """Verify custom query deep scan produces complete dossier."""
-    with patch.object(tr, "fetch_shopping_suggestions", new_callable=AsyncMock) as mock_sugg, \
-         patch.object(tr, "match_amazon_products_for_trend", new_callable=AsyncMock) as mock_match:
+    import datetime as _dt
+    from app.services.trend_sources import SourceSignal
 
-        mock_sugg.return_value = ["ceramic pour over stand", "japandi coffee bar aesthetic"]
+    async def _fake_scan(seed_query, category):
+        return [SourceSignal(
+            source="shopping", status="fresh",
+            queries=["ceramic pour over stand", "japandi coffee bar aesthetic"],
+            demand_hint=90.0,
+            fetched_at=_dt.datetime.now(_dt.timezone.utc).isoformat(),
+        )]
+
+    with patch.object(tr, "_scan_seed_signals", new_callable=AsyncMock) as mock_scan, \
+         patch.object(tr, "match_amazon_products_for_trend", new_callable=AsyncMock) as mock_match, \
+         patch.object(tr, "_trend_cache_dir", return_value=tmp_path / "custom_cache"):
+
+        mock_scan.side_effect = _fake_scan
         mock_match.return_value = [{
             "asin": "B09COFFEE1",
             "title": "Minimalist Ceramic Pour Over Stand",
@@ -104,7 +116,10 @@ async def test_analyze_custom_trend_query():
 
         dossier = await tr.analyze_custom_trend_query("japandi coffee bar", category="kitchen")
         assert dossier["title"] == "Japandi Coffee Bar"
-        assert dossier["opportunity_score"] >= 80
+        # Computed score only (hardcoded 87/92 floor removed in Task 7):
+        # 0.40*90 + 0.35*50 + 0.25*50 = 66. Ceiling is 70 while
+        # money/winnability stay heuristic at 50.
+        assert dossier["opportunity_score"] >= 60
         assert dossier["category"] == "kitchen"
         assert len(dossier["related_queries"]) > 0
         assert len(dossier["matched_products"]) > 0

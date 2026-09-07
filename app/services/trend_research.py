@@ -570,47 +570,105 @@ async def _build_trend_dossier(seed: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-# ── Custom On-Demand Keyword Trend Deep-Dive ──────────────────────────────
+# ── Custom On-Demand Keyword Trend Deep-Dive (24h disk cache + live clients) ─
+
+def _trend_cache_dir() -> Path:
+    d = Path(settings.storage_path) / "trend_radar" / "custom_cache"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def _read_custom_cache(key: str, max_age_hours: int = 24) -> dict[str, Any] | None:
+    try:
+        file = _trend_cache_dir() / f"{key}.json"
+        if not file.exists():
+            return None
+        payload = json.loads(file.read_text(encoding="utf-8"))
+        ts = datetime.fromisoformat(payload.get("cached_at", "2000-01-01"))
+        age_h = (datetime.now(timezone.utc) - ts).total_seconds() / 3600
+        return payload.get("dossier") if age_h <= max_age_hours else None
+    except Exception:
+        return None
+
+
+def _write_custom_cache(key: str, dossier: dict[str, Any]) -> None:
+    try:
+        (_trend_cache_dir() / f"{key}.json").write_text(
+            json.dumps({"cached_at": datetime.now(timezone.utc).isoformat(),
+                        "dossier": dossier}, indent=2), encoding="utf-8")
+    except Exception as e:
+        logger.warning("Custom trend cache write failed: %s", e)
+
 
 async def analyze_custom_trend_query(query: str, category: str = "fashion") -> dict[str, Any]:
     """
     Run on-demand deep trend analysis for any user-entered keyword.
+
+    Same dossier shape as `_build_trend_dossier` (score_breakdown,
+    keyword_pack, sources, "Tier X", int opportunity_score). Results are
+    cached per query+category for 24h; cache failures only warn. The
+    seasonal heat rule affects display fields only — the score is computed.
     """
+    from app.config import settings as _settings
+
     clean_q = query.strip()
     if not clean_q:
         raise ValueError("Search query cannot be empty")
 
-    # 1. Fetch real-time shopping queries
-    queries = await fetch_shopping_suggestions(clean_q, max_results=8)
-    if not queries:
-        queries = [clean_q, f"{clean_q} aesthetic", f"{clean_q} 2026", f"best {clean_q} amazon"]
+    key = re.sub(r"[^a-z0-9]+", "_", clean_q.lower()).strip("_") + f"__{category}"
+    cached = _read_custom_cache(key)
+    if cached is not None:
+        return cached
 
-    # 2. Match real Amazon products
+    # 1. Live multi-source scan + blended computed score (settings weights).
+    signals = await _scan_seed_signals(clean_q, category)
+    blended = _blend_signals(signals)
+    scored = score_trend(
+        blended["demand"], blended["money"], blended["winnability"],
+        weights={
+            "demand": _settings.trend_weight_demand,
+            "money": _settings.trend_weight_money,
+            "winnability": _settings.trend_weight_winnability,
+        },
+    )
+    related = sorted(
+        {q for s in signals for q in s.queries},
+        key=lambda q: (len(q), q),
+    )[:8] or [clean_q, f"{clean_q} aesthetic", f"{clean_q} 2026", f"best {clean_q} amazon"]
+
+    # 2. Live Amazon match (fail-soft inside; returns [] when offline).
     products = await match_amazon_products_for_trend(clean_q, category=category, item_count=3)
 
-    # 3. Classify momentum and build dossier
+    # 3. Deterministic keyword pack + seasonal display rule (display only).
+    title = clean_q.title()
+    pack = build_pack(
+        primary=related[0], related_queries=related,
+        board_angle=f"{title} Ideas",
+        variations_count=4,
+    )
     q_lower = clean_q.lower()
     is_seasonal = any(k in q_lower for k in ("fall", "autumn", "halloween", "holiday", "christmas", "summer", "spring"))
     heat_level = "breakout" if is_seasonal else "rising"
     heat_badge = "🔥 Seasonal Breakout (+350%)" if is_seasonal else "📈 Trending (+180% Search Demand)"
-    score = 92 if is_seasonal else 87
-
-    title = clean_q.title()
-    recommended_board = f"{title} Ideas"
 
     dossier = TrendDossier(
-        id=re.sub(r"[^a-zA-Z0-9]+", "_", clean_q.lower()).strip("_"),
+        id=re.sub(r"[^a-z0-9]+", "_", clean_q.lower()).strip("_"),
         title=title,
         category=category,
         heat_level=heat_level,
         heat_badge=heat_badge,
-        opportunity_score=score,
-        tier="Tier S" if score >= 90 else "Tier A",
+        opportunity_score=int(scored["score"]),
+        tier=f"Tier {scored['tier']}",
         aesthetic_vibe=f"Trending 2026 {title} Commercial Aesthetic",
         outfit_or_scene=f"Natural unposed lifestyle setting featuring {clean_q}, soft lighting, candid perspective",
-        recommended_board=recommended_board,
-        related_queries=queries,
+        recommended_board=f"{title} Ideas",
+        related_queries=related,
         matched_products=products,
     )
 
-    return dossier.to_dict()
+    out = dossier.to_dict()
+    out["score_breakdown"] = scored["breakdown"]
+    out["keyword_pack"] = pack.to_dict()
+    out["sources"] = [s.to_dict() for s in signals]
+    _write_custom_cache(key, out)
+    return out
