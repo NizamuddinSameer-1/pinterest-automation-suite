@@ -280,12 +280,25 @@ async def generate_batch_pins_seo(
     trend_label: str | None = None,
     existing_boards: list[str] | None = None,
     profile_id: str | None = None,
+    keyword_pack: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """
     Generate vision-grounded Pinterest SEO for a batch of generated images.
     Each image is inspected via vision (Lane 2) and assigned a distinct hook framework,
     guaranteeing zero duplicate titles across the batch.
     """
+    def _pack_for(idx: int) -> dict[str, Any] | None:
+        if not keyword_pack:
+            return None
+        hooks = keyword_pack.get("hooks") or []
+        match = next(
+            (h for h in hooks if isinstance(h, dict) and h.get("variation_index") == idx),
+            None,
+        )
+        if match is not None:
+            return {**keyword_pack, "hooks": [match]}
+        return keyword_pack
+
     paths = list(image_paths or [])
     total = len(paths) if paths else 1
     results: list[dict[str, Any]] = []
@@ -298,6 +311,7 @@ async def generate_batch_pins_seo(
             trend_label=trend_label,
             existing_boards=existing_boards,
             profile_id=profile_id,
+            keyword_pack=_pack_for(1),
         )
         return [seo]
 
@@ -312,6 +326,7 @@ async def generate_batch_pins_seo(
                 total_variations=total,
                 existing_boards=existing_boards,
                 profile_id=profile_id,
+                keyword_pack=_pack_for(idx),
             )
             results.append(item_seo)
         except Exception as e:
@@ -326,6 +341,7 @@ async def generate_batch_pins_seo(
                     total_variations=total,
                     existing_boards=existing_boards,
                     profile_id=profile_id,
+                    keyword_pack=_pack_for(idx),
                 )
                 results.append(fallback_seo)
             except Exception as e2:

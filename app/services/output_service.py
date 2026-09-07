@@ -197,6 +197,14 @@ async def record_generation_outputs(
 
     product_data = _product_to_dict(product)
     scene_data = json.loads(job.scene_json) if job.scene_json else {}
+    keyword_pack: dict[str, Any] | None = None
+    raw_pack = getattr(job, "keyword_pack_json", None)
+    if raw_pack:
+        try:
+            parsed = json.loads(raw_pack)
+            keyword_pack = parsed if isinstance(parsed, dict) else None
+        except Exception:
+            keyword_pack = None
 
     from app.pipeline.pinterest_seo import generate_batch_pins_seo
 
@@ -206,6 +214,7 @@ async def record_generation_outputs(
             scene=scene_data,
             image_paths=image_paths,
             trend_label=ref.trend_label,
+            keyword_pack=keyword_pack,
         )
     except Exception as e:  # noqa: BLE001 — surfaced to the caller, never papered over
         logger.error("SEO generation failed for job %s: %s", job.id, e)

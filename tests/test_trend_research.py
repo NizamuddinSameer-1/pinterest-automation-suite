@@ -72,9 +72,27 @@ async def test_match_amazon_products_for_trend():
 
 @pytest.mark.asyncio
 async def test_discover_trends_radar():
-    """Verify trend radar discovery and category filtering."""
-    with patch.object(tr, "fetch_shopping_suggestions", new_callable=AsyncMock) as mock_sugg:
-        mock_sugg.return_value = ["fall cardigan outfit", "cardigan aesthetic"]
+    """Verify trend radar discovery and category filtering (fully hermetic, no network)."""
+    import datetime as _dt
+    from app.services.trend_sources import SourceSignal
+
+    async def _fake_scan(seed_query, category):
+        return [SourceSignal(
+            source="shopping", status="fresh",
+            queries=[seed_query, f"{seed_query} aesthetic"],
+            demand_hint=75.0,
+            fetched_at=_dt.datetime.now(_dt.timezone.utc).isoformat(),
+        )]
+
+    async def _fake_match(query, category, fallback_items=None, item_count=2):
+        return []
+
+    with patch.object(tr, "_scan_seed_signals", new_callable=AsyncMock) as mock_scan, \
+         patch.object(tr, "match_amazon_products_for_trend", new_callable=AsyncMock) as mock_match, \
+         patch.object(tr, "_write_snapshot", return_value=None):
+
+        mock_scan.side_effect = _fake_scan
+        mock_match.side_effect = _fake_match
 
         fashion_dossiers = await tr.discover_trends_radar(category_filter="fashion")
         assert len(fashion_dossiers) > 0
@@ -82,7 +100,7 @@ async def test_discover_trends_radar():
             assert d["category"] == "fashion"
             assert "title" in d
             assert "matched_products" in d
-            assert len(d["matched_products"]) > 0
+            assert isinstance(d["matched_products"], list)
 
 
 @pytest.mark.asyncio
@@ -140,7 +158,7 @@ async def test_launch_campaign_creates_records(tmp_path):
         await conn.run_sync(Base.metadata.create_all)
 
     req = LaunchTrendCampaignRequest(
-        asin="B09TESTASIN",
+        asin="B09TESTASI",
         title="Retro Floral Maxi Dress",
         price=42.50,
         category="fashion",

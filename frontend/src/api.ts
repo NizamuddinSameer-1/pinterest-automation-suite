@@ -912,6 +912,7 @@ export const api = {
     scene_setting?: string;
     board_name?: string;
     affiliate_url?: string;
+    keyword_pack?: object;
   }): Promise<{ status: string; job_id: string; product_id: string; board_name?: string; message: string }> => {
     const res = await fetch(`${API_BASE}/research/launch-campaign`, {
       method: 'POST',
@@ -954,6 +955,9 @@ export interface TrendDossier {
   related_queries: string[];
   matched_products: TrendProduct[];
   discovered_at?: string;
+  score_breakdown?: { demand: number; money: number; winnability: number; weights_version: number; weights_fingerprint?: string };
+  sources?: { source: string; status: string }[];
+  keyword_pack?: { primary: string; long_tails: string[]; hooks: { variation_index: number; framework: string }[]; board_angle: string; negative_terms: string[]; pack_version: number };
 }
 
 export interface AmazonItem {

@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 
 from app.api.research import LaunchTrendCampaignRequest, launch_campaign_from_trend
-from app.models.models import Base, Job, Product
+from app.models.models import Base, Job, Product, Reference
 from app.services import trend_research as tr
 
 
@@ -109,6 +109,75 @@ async def test_launch_fails_loud_without_reference_and_leaves_no_orphan(tmp_path
         with pytest.raises(HTTPException) as exc_info:
             await launch_campaign_from_trend(body, db)
         assert exc_info.value.status_code == 409
+
+        products = (await db.execute(select(Product))).scalars().all()
+        jobs = (await db.execute(select(Job))).scalars().all()
+        assert products == []
+        assert jobs == []
+
+
+@pytest.mark.asyncio
+async def test_launch_rejects_file_image_url_without_writing(tmp_path, monkeypatch):
+    """file:// image_url must 400 before any Product/Job row is created (no network)."""
+    import httpx
+
+    class _NoNetwork:
+        def __init__(self, *a, **kw):
+            raise AssertionError("network touched during rejected launch")
+
+    monkeypatch.setattr(httpx, "AsyncClient", _NoNetwork)
+
+    engine, async_session = _make_db(tmp_path)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    async with async_session() as db:
+        db.add(Reference(
+            id="ref-ssrf-guard", image_path="ref.jpg",
+            trend_label="Streetwear", category="fashion", status="analyzed",
+        ))
+        await db.commit()
+        body = LaunchTrendCampaignRequest(
+            asin="B012345678", title="Real Test Jacket", price=49.99,
+            trend_label="Streetwear", image_url="file:///etc/passwd",
+        )
+        with pytest.raises(HTTPException) as exc_info:
+            await launch_campaign_from_trend(body, db)
+        assert exc_info.value.status_code == 400
+
+        products = (await db.execute(select(Product))).scalars().all()
+        jobs = (await db.execute(select(Job))).scalars().all()
+        assert products == []
+        assert jobs == []
+
+
+@pytest.mark.asyncio
+async def test_launch_rejects_traversal_asin(tmp_path, monkeypatch):
+    """Path-traversal ASIN must 400 before any Product/Job row is created (no network)."""
+    import httpx
+
+    class _NoNetwork:
+        def __init__(self, *a, **kw):
+            raise AssertionError("network touched during rejected launch")
+
+    monkeypatch.setattr(httpx, "AsyncClient", _NoNetwork)
+
+    engine, async_session = _make_db(tmp_path)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    async with async_session() as db:
+        db.add(Reference(
+            id="ref-asin-guard", image_path="ref.jpg",
+            trend_label="Streetwear", category="fashion", status="analyzed",
+        ))
+        await db.commit()
+        body = LaunchTrendCampaignRequest(
+            asin="../../evil", title="Evil", price=9.99, trend_label="Streetwear",
+        )
+        with pytest.raises(HTTPException) as exc_info:
+            await launch_campaign_from_trend(body, db)
+        assert exc_info.value.status_code == 400
 
         products = (await db.execute(select(Product))).scalars().all()
         jobs = (await db.execute(select(Job))).scalars().all()

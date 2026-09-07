@@ -11,6 +11,9 @@ from __future__ import annotations
 
 import json
 import logging
+import re
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -50,6 +53,7 @@ class LaunchTrendCampaignRequest(BaseModel):
     scene_setting: str | None = Field(None, description="Recommended scene description")
     board_name: str | None = Field(None, description="Target Pinterest board name")
     affiliate_url: str | None = Field(None, description="Direct or smart affiliate link")
+    keyword_pack: dict[str, Any] | None = Field(None, description="Keyword pack threaded from the trend dossier")
 
 
 @router.get("/trends")
@@ -59,7 +63,29 @@ async def get_trends_radar(
     """
     Get today's real-time Trend Radar feed with live Google Shopping search momentum,
     high-intent queries, and top-rated matching Amazon affiliate products.
+    Serves the daily snapshot when it exists and is <1h old; else live-scans.
     """
+    try:
+        snap_dir = Path(settings.storage_path) / "trend_radar"
+        snap_file = snap_dir / f"{datetime.now(timezone.utc).strftime('%Y-%m-%d')}.json"
+        if snap_file.exists():
+            try:
+                age_s = (datetime.now(timezone.utc).timestamp() - snap_file.stat().st_mtime)
+                if age_s < 3600:
+                    payload = json.loads(snap_file.read_text(encoding="utf-8"))
+                    dossiers = payload.get("dossiers") or []
+                    if category and category != "all":
+                        dossiers = [d for d in dossiers if d.get("category") == category]
+                    return {
+                        "success": True,
+                        "category": category,
+                        "count": len(dossiers),
+                        "trends": dossiers,
+                    }
+            except Exception as e:
+                logger.warning("Trend snapshot unreadable, falling through to live scan: %s", e)
+    except Exception as e:
+        logger.warning("Trend snapshot check failed, falling through to live scan: %s", e)
     try:
         trends = await discover_trends_radar(category_filter=category)
         return {
@@ -104,6 +130,12 @@ async def launch_campaign_from_trend(
     asin = body.asin.strip().upper()
     if not asin:
         raise HTTPException(status_code=400, detail="ASIN is required")
+    if not re.fullmatch(r"[A-Z0-9]{10}", asin):
+        raise HTTPException(status_code=400, detail=f"Invalid ASIN {body.asin!r}: must be 10 alphanumeric characters")
+    if body.image_url:
+        lowered = body.image_url.strip().lower()
+        if not (lowered.startswith("http://") or lowered.startswith("https://")):
+            raise HTTPException(status_code=400, detail="image_url must use http:// or https://")
 
     # Demo-guard: curated Trend Radar fallbacks carry invented ASINs (Unsplash
     # photos, illustrative prices) — ingesting one would create a Product whose
@@ -156,10 +188,33 @@ async def launch_campaign_from_trend(
 
         if body.image_url:
             try:
-                async with httpx.AsyncClient(timeout=12.0) as client:
-                    resp = await client.get(body.image_url)
-                    if resp.status_code == 200 and len(resp.content) > 500:
-                        img_dest.write_bytes(resp.content)
+                async with httpx.AsyncClient(timeout=12.0, follow_redirects=True) as client:
+                    async with client.stream("GET", body.image_url) as resp:
+                        if resp.status_code != 200:
+                            logger.warning("Product image download returned %s for %s", resp.status_code, body.image_url)
+                        else:
+                            content_type = resp.headers.get("content-type", "")
+                            if not content_type.lower().startswith("image/"):
+                                logger.warning(
+                                    "Refusing product image with content-type %r from %s",
+                                    content_type, body.image_url,
+                                )
+                            else:
+                                chunks: list[bytes] = []
+                                total = 0
+                                too_big = False
+                                async for chunk in resp.aiter_bytes(chunk_size=65536):
+                                    total += len(chunk)
+                                    if total > 8 * 1024 * 1024:
+                                        too_big = True
+                                        break
+                                    chunks.append(chunk)
+                                if too_big:
+                                    logger.warning("Product image exceeded 8 MB cap, discarding bytes from %s", body.image_url)
+                                else:
+                                    content = b"".join(chunks)
+                                    if len(content) > 500:
+                                        img_dest.write_bytes(content)
             except Exception as e:
                 logger.warning("Could not download product image from %s: %s", body.image_url, e)
 
@@ -197,6 +252,7 @@ async def launch_campaign_from_trend(
         reference_id=reference.id,
         scene_json=json.dumps(scene_dict),
         current_state="DRAFT",
+        keyword_pack_json=json.dumps(body.keyword_pack) if body.keyword_pack else None,
     )
     db.add(job)
     await db.commit()

@@ -12,6 +12,7 @@ Discovers real-time market trends, seasonal surges, and high-demand products:
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import re
@@ -33,6 +34,13 @@ from app.services.keyword_packs import build_pack
 logger = logging.getLogger("pre.trend_research")
 
 GOOGLE_SHOPPING_SUGGEST_URL = "https://suggestqueries.google.com/complete/search"
+
+_SCAN_SEMAPHORE = asyncio.Semaphore(4)
+
+
+def _weights_fingerprint(weights: dict[str, float]) -> str:
+    src = f"{weights.get('demand')}|{weights.get('money')}|{weights.get('winnability')}"
+    return hashlib.sha1(src.encode("utf-8")).hexdigest()[:8]
 
 
 @dataclass
@@ -488,12 +496,17 @@ async def discover_trends_radar(category_filter: str | None = None) -> list[dict
     autocomplete and matching live high-EPC Amazon products.
     """
     categories = [category_filter] if category_filter and category_filter != "all" else list(TREND_SEEDS.keys())
+
+    async def _gated(seed: dict[str, Any]) -> dict[str, Any]:
+        async with _SCAN_SEMAPHORE:
+            return await _build_trend_dossier(seed)
+
     tasks = []
 
     for cat in categories:
         seeds = TREND_SEEDS.get(cat, [])
         for seed in seeds:
-            tasks.append(_build_trend_dossier(seed))
+            tasks.append(_gated(seed))
 
     results = await asyncio.gather(*tasks, return_exceptions=False)
     # Sort by opportunity score descending (Tier S first)
@@ -530,14 +543,16 @@ async def _build_trend_dossier(seed: dict[str, Any]) -> dict[str, Any]:
 
     signals = await _scan_seed_signals(seed_query, category)
     blended = _blend_signals(signals)
+    _weights = {
+        "demand": _settings.trend_weight_demand,
+        "money": _settings.trend_weight_money,
+        "winnability": _settings.trend_weight_winnability,
+    }
     scored = score_trend(
         blended["demand"], blended["money"], blended["winnability"],
-        weights={
-            "demand": _settings.trend_weight_demand,
-            "money": _settings.trend_weight_money,
-            "winnability": _settings.trend_weight_winnability,
-        },
+        weights=_weights,
     )
+    scored["breakdown"]["weights_fingerprint"] = _weights_fingerprint(_weights)
     related = sorted(
         {q for s in signals for q in s.queries},
         key=lambda q: (len(q), q),
@@ -584,7 +599,13 @@ def _read_custom_cache(key: str, max_age_hours: int = 24) -> dict[str, Any] | No
         if not file.exists():
             return None
         payload = json.loads(file.read_text(encoding="utf-8"))
-        ts = datetime.fromisoformat(payload.get("cached_at", "2000-01-01"))
+        raw_ts = payload.get("cached_at")
+        if raw_ts:
+            ts = datetime.fromisoformat(raw_ts)
+            if ts.tzinfo is None:
+                ts = ts.replace(tzinfo=timezone.utc)
+        else:
+            ts = datetime.min.replace(tzinfo=timezone.utc)
         age_h = (datetime.now(timezone.utc) - ts).total_seconds() / 3600
         return payload.get("dossier") if age_h <= max_age_hours else None
     except Exception:
@@ -615,7 +636,7 @@ async def analyze_custom_trend_query(query: str, category: str = "fashion") -> d
     if not clean_q:
         raise ValueError("Search query cannot be empty")
 
-    key = re.sub(r"[^a-z0-9]+", "_", clean_q.lower()).strip("_") + f"__{category}"
+    key = re.sub(r"[^a-z0-9]+", "_", clean_q.lower()).strip("_") + f"__{re.sub(r'[^a-z0-9]+', '_', category.lower()).strip('_')}"
     cached = _read_custom_cache(key)
     if cached is not None:
         return cached
@@ -623,14 +644,16 @@ async def analyze_custom_trend_query(query: str, category: str = "fashion") -> d
     # 1. Live multi-source scan + blended computed score (settings weights).
     signals = await _scan_seed_signals(clean_q, category)
     blended = _blend_signals(signals)
+    _weights = {
+        "demand": _settings.trend_weight_demand,
+        "money": _settings.trend_weight_money,
+        "winnability": _settings.trend_weight_winnability,
+    }
     scored = score_trend(
         blended["demand"], blended["money"], blended["winnability"],
-        weights={
-            "demand": _settings.trend_weight_demand,
-            "money": _settings.trend_weight_money,
-            "winnability": _settings.trend_weight_winnability,
-        },
+        weights=_weights,
     )
+    scored["breakdown"]["weights_fingerprint"] = _weights_fingerprint(_weights)
     related = sorted(
         {q for s in signals for q in s.queries},
         key=lambda q: (len(q), q),

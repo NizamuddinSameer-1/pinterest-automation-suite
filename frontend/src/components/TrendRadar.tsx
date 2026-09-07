@@ -101,6 +101,7 @@ export const TrendRadar: React.FC<TrendRadarProps> = ({
         scene_setting: trend.outfit_or_scene,
         board_name: trend.recommended_board,
         affiliate_url: prod.affiliate_url,
+        ...(trend.keyword_pack ? { keyword_pack: trend.keyword_pack } : {}),
       });
 
       setLaunchSuccess({
@@ -485,6 +486,52 @@ export const TrendRadar: React.FC<TrendRadarProps> = ({
             </div>
           </div>
 
+          {customTrend.score_breakdown && (
+            <div style={{ display: 'flex', gap: '8px', fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+              <span>Demand {customTrend.score_breakdown.demand}</span>
+              <span>Money {customTrend.score_breakdown.money}</span>
+              <span>Win {customTrend.score_breakdown.winnability}</span>
+            </div>
+          )}
+
+          {(customTrend.sources || []).length > 0 && (
+            <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+              {(customTrend.sources || []).map((s, idx: number) => (
+                <span key={idx} title={s.source + ': ' + s.status} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                  <span style={{ width: '8px', height: '8px', borderRadius: '9999px', background: s.status === 'fresh' ? '#34d399' : '#f59e0b', display: 'inline-block' }} />
+                  {s.status !== 'fresh' && (
+                    <span style={{ fontSize: '0.68rem', color: '#f59e0b', fontWeight: 600 }}>stale</span>
+                  )}
+                </span>
+              ))}
+            </div>
+          )}
+
+          {customTrend.keyword_pack?.long_tails && (
+            <div>
+              <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)', fontWeight: 700, marginBottom: '8px' }}>
+                KEYWORD PACK — {customTrend.keyword_pack.primary}
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                {(customTrend.keyword_pack.long_tails as string[]).slice(0, 4).map((q: string, idx: number) => (
+                  <span
+                    key={idx}
+                    style={{
+                      background: 'rgba(255, 255, 255, 0.05)',
+                      border: '1px solid rgba(255, 255, 255, 0.1)',
+                      borderRadius: '6px',
+                      padding: '4px 10px',
+                      fontSize: '0.74rem',
+                      color: '#94a3b8',
+                    }}
+                  >
+                    "{q}"
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Search Queries */}
           <div>
             <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)', fontWeight: 700, marginBottom: '8px' }}>
@@ -713,11 +760,11 @@ export const TrendRadar: React.FC<TrendRadarProps> = ({
                     <span>{trend.opportunity_score} Score</span>
                   </div>
                 </div>
-                {(trend as any).score_breakdown && (
+                {trend.score_breakdown && (
                   <div style={{ display: 'flex', gap: '8px', marginTop: '8px', fontSize: '0.7rem', color: 'var(--text-muted)' }}>
-                    <span>Demand {(trend as any).score_breakdown.demand}</span>
-                    <span>Money {(trend as any).score_breakdown.money}</span>
-                    <span>Win {(trend as any).score_breakdown.winnability}</span>
+                    <span>Demand {trend.score_breakdown.demand}</span>
+                    <span>Money {trend.score_breakdown.money}</span>
+                    <span>Win {trend.score_breakdown.winnability}</span>
                   </div>
                 )}
 
@@ -799,9 +846,9 @@ export const TrendRadar: React.FC<TrendRadarProps> = ({
                       </span>
                     ))}
                   </div>
-                  {(trend as any).keyword_pack?.long_tails && (
+                  {(trend.keyword_pack?.long_tails) && (
                     <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', marginTop: '6px' }}>
-                      {((trend as any).keyword_pack.long_tails as string[]).slice(0, 4).map((q: string, idx: number) => (
+                      {(trend.keyword_pack.long_tails as string[]).slice(0, 4).map((q: string, idx: number) => (
                         <span
                           key={idx}
                           style={{
@@ -843,10 +890,15 @@ export const TrendRadar: React.FC<TrendRadarProps> = ({
                     <span style={{ color: '#f59e0b' }}>Amazon Prime Verified</span>
                   )}
                 </div>
-                {((trend as any).sources || []).length > 0 && (
-                  <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
-                    {((trend as any).sources || []).map((s: any, idx: number) => (
-                      <span key={idx} title={s.source + ': ' + s.status} style={{ width: '8px', height: '8px', borderRadius: '9999px', background: s.status === 'fresh' ? '#34d399' : '#f59e0b', display: 'inline-block' }} />
+                {(trend.sources || []).length > 0 && (
+                  <div style={{ display: 'flex', gap: '8px', alignItems: 'center', flexWrap: 'wrap' }}>
+                    {(trend.sources || []).map((s, idx: number) => (
+                      <span key={idx} title={s.source + ': ' + s.status} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                        <span style={{ width: '8px', height: '8px', borderRadius: '9999px', background: s.status === 'fresh' ? '#34d399' : '#f59e0b', display: 'inline-block' }} />
+                        {s.status !== 'fresh' && (
+                          <span style={{ fontSize: '0.68rem', color: '#f59e0b', fontWeight: 600 }}>stale</span>
+                        )}
+                      </span>
                     ))}
                   </div>
                 )}

@@ -64,7 +64,7 @@ async def lifespan(app: FastAPI):
     yield
 
     logger.info("Shutting down scheduler...")
-    stop_scheduler()
+    await stop_scheduler()
     from app.services.trend_scheduler import stop_trend_scan
     await stop_trend_scan()
 

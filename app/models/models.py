@@ -146,6 +146,7 @@ class Job(Base):
     concepts_json: Mapped[str | None] = mapped_column(Text)
     current_state: Mapped[str] = mapped_column(String(32), nullable=False, default="DRAFT")
     provider: Mapped[str] = mapped_column(String(64), default="google_flow_manual")
+    keyword_pack_json: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
     rework_count: Mapped[int] = mapped_column(Integer, default=0)
     failure_reason: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
