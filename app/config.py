@@ -85,6 +85,12 @@ class Settings(BaseSettings):
     # in the publisher, both generation paths and the batch upload route, so
     # changing boards meant editing four files.
     default_board_name: str = "Just Random Photography"
+    # ── Trend Radar v2 scan ────────────────────────
+    trend_scan_enabled: bool = True
+    trend_scan_interval_hours: int = 24
+    trend_weight_demand: float = 0.40
+    trend_weight_money: float = 0.35
+    trend_weight_winnability: float = 0.25
 
     # ── Pin scheduler ────────────────────────────
     # The in-process loop in app/services/scheduler.py that drains

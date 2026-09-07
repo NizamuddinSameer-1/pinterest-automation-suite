@@ -45,6 +45,8 @@ async def lifespan(app: FastAPI):
     # closed publish on the next tick instead of being stranded.
     from app.services.scheduler import start_scheduler, stop_scheduler
     start_scheduler()
+    from app.services.trend_scheduler import start_trend_scan
+    start_trend_scan()
 
     # Recover any generation jobs stranded in GENERATING if the server was restarted
     try:
@@ -63,6 +65,8 @@ async def lifespan(app: FastAPI):
 
     logger.info("Shutting down scheduler...")
     stop_scheduler()
+    from app.services.trend_scheduler import stop_trend_scan
+    await stop_trend_scan()
 
 
 app = FastAPI(
