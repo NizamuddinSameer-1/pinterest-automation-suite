@@ -713,6 +713,13 @@ export const TrendRadar: React.FC<TrendRadarProps> = ({
                     <span>{trend.opportunity_score} Score</span>
                   </div>
                 </div>
+                {(trend as any).score_breakdown && (
+                  <div style={{ display: 'flex', gap: '8px', marginTop: '8px', fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+                    <span>Demand {(trend as any).score_breakdown.demand}</span>
+                    <span>Money {(trend as any).score_breakdown.money}</span>
+                    <span>Win {(trend as any).score_breakdown.winnability}</span>
+                  </div>
+                )}
 
                 <h3 style={{
                   fontSize: '1.2rem',
@@ -792,6 +799,24 @@ export const TrendRadar: React.FC<TrendRadarProps> = ({
                       </span>
                     ))}
                   </div>
+                  {(trend as any).keyword_pack?.long_tails && (
+                    <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', marginTop: '6px' }}>
+                      {((trend as any).keyword_pack.long_tails as string[]).slice(0, 4).map((q: string, idx: number) => (
+                        <span
+                          key={idx}
+                          style={{
+                            fontSize: '0.68rem',
+                            color: 'var(--text-muted)',
+                            background: 'rgba(255, 255, 255, 0.04)',
+                            padding: '2px 6px',
+                            borderRadius: '4px',
+                          }}
+                        >
+                          {q}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -818,6 +843,13 @@ export const TrendRadar: React.FC<TrendRadarProps> = ({
                     <span style={{ color: '#f59e0b' }}>Amazon Prime Verified</span>
                   )}
                 </div>
+                {((trend as any).sources || []).length > 0 && (
+                  <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
+                    {((trend as any).sources || []).map((s: any, idx: number) => (
+                      <span key={idx} title={s.source + ': ' + s.status} style={{ width: '8px', height: '8px', borderRadius: '9999px', background: s.status === 'fresh' ? '#34d399' : '#f59e0b', display: 'inline-block' }} />
+                    ))}
+                  </div>
+                )}
 
                 {trend.matched_products && trend.matched_products.length > 0 && (
                   <div style={{
