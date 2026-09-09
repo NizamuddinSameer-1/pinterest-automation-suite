@@ -31,6 +31,12 @@ def test_demo_asins_registry_covers_all_fallbacks():
                 assert str(item["asin"]).upper() in tr.DEMO_ASINS
 
 
+def test_demo_asins_registry_covers_synthetic_placeholders():
+    """Matcher-emitted synthetic ASINs (not seed data) must also be blocked."""
+    assert "B0SEARCH01" in tr.DEMO_ASINS
+    assert "B0DEMOASIN1" in tr.DEMO_ASINS
+
+
 @pytest.mark.asyncio
 async def test_fallback_matcher_tags_demo_only(monkeypatch):
     """PA-API outage path: fallbacks come back flagged demo_only; live path is False."""
@@ -83,6 +89,28 @@ async def test_launch_rejects_demo_asin_without_writing(tmp_path):
     async with async_session() as db:
         body = LaunchTrendCampaignRequest(
             asin=_demo_asin(), title="Demo Jacket", price=54.99
+        )
+        with pytest.raises(HTTPException) as exc_info:
+            await launch_campaign_from_trend(body, db)
+        assert exc_info.value.status_code == 400
+        assert "demo" in exc_info.value.detail.lower()
+
+        products = (await db.execute(select(Product))).scalars().all()
+        jobs = (await db.execute(select(Job))).scalars().all()
+        assert products == []
+        assert jobs == []
+
+
+@pytest.mark.asyncio
+async def test_launch_rejects_synthetic_b0search01_without_writing(tmp_path):
+    """The query-shaped placeholder must 400 like any other demo ASIN."""
+    engine, async_session = _make_db(tmp_path)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    async with async_session() as db:
+        body = LaunchTrendCampaignRequest(
+            asin="B0SEARCH01", title="Top Rated Barn Jacket on Amazon", price=34.99
         )
         with pytest.raises(HTTPException) as exc_info:
             await launch_campaign_from_trend(body, db)
@@ -203,13 +231,19 @@ async def test_dossier_carries_score_breakdown_and_pack(monkeypatch):
     async def _fake_match(query, category, fallback_items=None, item_count=2):
         return []
 
+    async def _no_pinterest(*args, **kwargs):
+        return []
+
     monkeypatch.setattr(mod, "_scan_seed_signals", _fake_scan)
     monkeypatch.setattr(mod, "match_amazon_products_for_trend", _fake_match)
-    monkeypatch.setattr(mod, "_write_snapshot", lambda dossiers: None)
+    monkeypatch.setattr(mod, "_fetch_pinterest_discovery", _no_pinterest)
+    monkeypatch.setattr(mod, "_write_snapshot", lambda dossiers, **kwargs: None)
     dossiers = await mod.discover_trends_radar(category_filter="fashion")
     assert dossiers, "expected dossiers for fashion seeds"
     first = dossiers[0]
     assert first["score_breakdown"]["weights_version"] == 1
+    assert first["score_breakdown"]["demand_source"] == "autocomplete_breadth_proxy"
+    assert first["origin"] == "curated_seed"
     assert first["tier"] in ("Tier S", "Tier A", "Tier B")
     assert first["keyword_pack"]["primary"]
     assert len(first["keyword_pack"]["hooks"]) >= 1

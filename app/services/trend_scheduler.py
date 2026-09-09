@@ -24,21 +24,30 @@ async def run_scan_once() -> int:
     from app.services.pinterest_trends_scraper import get_official_pinterest_trends
 
     total = 0
+    # Refresh official Pinterest Trends FIRST: discovery inside
+    # discover_trends_radar() is cache-first, so warming the cache beforehand
+    # avoids cold-start Playwright storms on the radar path.
+    for preset in ["breakout", "growing", "top"]:
+        try:
+            trends = await get_official_pinterest_trends(preset=preset, force_refresh=True)
+            if trends and all(t.get("is_fallback", False) for t in trends):
+                logger.warning(
+                    "Official Pinterest Trends background refresh [%s]: live scrape failed, "
+                    "curated fallback served (not cached)", preset,
+                )
+            else:
+                logger.info("Official Pinterest Trends background refresh [%s]: %d items", preset, len(trends))
+            total += len(trends)
+        except Exception as e:
+            logger.warning("Official Pinterest Trends background refresh failed for %s: %s", preset, e)
+
+    # Commercial radar (with Pinterest discovery) runs against the warm cache.
     try:
         dossiers = await discover_trends_radar()
         logger.info("Commercial trend scan complete: %d dossiers", len(dossiers))
         total += len(dossiers)
     except Exception as e:
         logger.warning("Commercial trend scan failed: %s", e)
-
-    # Automatically refresh official Pinterest Trends in the background
-    for preset in ["breakout", "growing", "top"]:
-        try:
-            trends = await get_official_pinterest_trends(preset=preset, force_refresh=True)
-            logger.info("Official Pinterest Trends background refresh [%s]: %d items", preset, len(trends))
-            total += len(trends)
-        except Exception as e:
-            logger.warning("Official Pinterest Trends background refresh failed for %s: %s", preset, e)
 
     return total
 

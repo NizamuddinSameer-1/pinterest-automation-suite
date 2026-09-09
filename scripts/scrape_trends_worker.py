@@ -51,7 +51,7 @@ async def main():
         from app.services.pinterest_trends_scraper import scrape_custom_pinterest_trend_metrics
         term = sys.argv[2] if len(sys.argv) > 2 else "casual blazer outfits"
         country = sys.argv[3] if len(sys.argv) > 3 else "US"
-        metrics = await scrape_custom_pinterest_trend_metrics(clean_query=term, country=country)
+        metrics = await scrape_custom_pinterest_trend_metrics(query=term, country=country)
         print(json.dumps(metrics))
 
     else:

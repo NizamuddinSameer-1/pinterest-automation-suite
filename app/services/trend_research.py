@@ -43,6 +43,25 @@ def _weights_fingerprint(weights: dict[str, float]) -> str:
     return hashlib.sha1(src.encode("utf-8")).hexdigest()[:8]
 
 
+def _current_weights() -> dict[str, float]:
+    """Single source for scoring weights — keeps dossiers, cache keys and
+    snapshots fingerprinted consistently by construction."""
+    return {
+        "demand": settings.trend_weight_demand,
+        "money": settings.trend_weight_money,
+        "winnability": settings.trend_weight_winnability,
+    }
+
+
+def _current_weights_fingerprint() -> str:
+    return _weights_fingerprint(_current_weights())
+
+
+# Snapshot payload version. Bump when the dossier contract changes so stale
+# files (old scores, missing provenance) trigger a rescan instead of serving.
+SNAPSHOT_VERSION = 2
+
+
 @dataclass
 class ResearchedProduct:
     asin: str
@@ -66,8 +85,8 @@ class TrendDossier:
     id: str
     title: str
     category: str
-    heat_level: str  # breakout | rising | evergreen
-    heat_badge: str  # e.g. "🔥 Breakout (+360%)"
+    heat_level: str  # breakout | rising | emerging | steady | evergreen
+    heat_badge: str  # display label only — never carries invented percentages
     opportunity_score: int  # 0 to 100
     tier: str  # Tier S | Tier A | Tier B
     aesthetic_vibe: str
@@ -76,6 +95,7 @@ class TrendDossier:
     related_queries: list[str] = field(default_factory=list)
     matched_products: list[dict[str, Any]] = field(default_factory=list)
     discovered_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    origin: str = "curated_seed"  # curated_seed | pinterest_live | custom_query
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -90,7 +110,7 @@ TREND_SEEDS: dict[str, list[dict[str, Any]]] = {
             "seed_query": "barn jacket",
             "category": "fashion",
             "heat_level": "breakout",
-            "heat_badge": "🔥 Breakout (+420% Surge)",
+            "heat_badge": "🔥 Breakout",
             "opportunity_score": 96,
             "tier": "Tier S",
             "aesthetic_vibe": "Countryside English Heritage meets Modern Raw Denim",
@@ -121,7 +141,7 @@ TREND_SEEDS: dict[str, list[dict[str, Any]]] = {
             "seed_query": "chunky cardigan sweater",
             "category": "fashion",
             "heat_level": "evergreen",
-            "heat_badge": "🌲 Evergreen Staple (+140% Weekly)",
+            "heat_badge": "🌲 Evergreen Staple",
             "opportunity_score": 92,
             "tier": "Tier S",
             "aesthetic_vibe": "Quiet Luxury French Minimalist Layering",
@@ -152,7 +172,7 @@ TREND_SEEDS: dict[str, list[dict[str, Any]]] = {
             "seed_query": "wool trench coat women",
             "category": "fashion",
             "heat_level": "rising",
-            "heat_badge": "📈 Rising Wave (+240% Growth)",
+            "heat_badge": "📈 Rising Wave",
             "opportunity_score": 88,
             "tier": "Tier A",
             "aesthetic_vibe": "Dark Academia London Streetstyle",
@@ -177,7 +197,7 @@ TREND_SEEDS: dict[str, list[dict[str, Any]]] = {
             "seed_query": "fluted ceramic vase",
             "category": "home",
             "heat_level": "evergreen",
-            "heat_badge": "🌲 Evergreen Aesthetic (+180% Demand)",
+            "heat_badge": "🌲 Evergreen Aesthetic",
             "opportunity_score": 94,
             "tier": "Tier S",
             "aesthetic_vibe": "Minimalist Organic Wabi-Sabi Sanctuary",
@@ -208,7 +228,7 @@ TREND_SEEDS: dict[str, list[dict[str, Any]]] = {
             "seed_query": "sunset projection lamp",
             "category": "home",
             "heat_level": "rising",
-            "heat_badge": "📈 Rising Demand (+290% Social)",
+            "heat_badge": "📈 Rising Demand",
             "opportunity_score": 89,
             "tier": "Tier A",
             "aesthetic_vibe": "Warm Sunset Golden Hour Dream Bedroom",
@@ -233,7 +253,7 @@ TREND_SEEDS: dict[str, list[dict[str, Any]]] = {
             "seed_query": "matcha whisk set bamboo",
             "category": "kitchen",
             "heat_level": "breakout",
-            "heat_badge": "🔥 Breakout (+380% Viral Searches)",
+            "heat_badge": "🔥 Breakout",
             "opportunity_score": 95,
             "tier": "Tier S",
             "aesthetic_vibe": "Artisanal Home Cafe & Morning Rituals",
@@ -266,7 +286,7 @@ TREND_SEEDS: dict[str, list[dict[str, Any]]] = {
             "seed_query": "felt desk pad",
             "category": "tech",
             "heat_level": "evergreen",
-            "heat_badge": "🌲 Evergreen Productivity (+160%)",
+            "heat_badge": "🌲 Evergreen Productivity",
             "opportunity_score": 91,
             "tier": "Tier S",
             "aesthetic_vibe": "Distraction-Free Scandinavian Desk Sanctuary",
@@ -299,7 +319,7 @@ TREND_SEEDS: dict[str, list[dict[str, Any]]] = {
             "seed_query": "pumpkin patch outfit women",
             "category": "seasonal",
             "heat_level": "breakout",
-            "heat_badge": "🔥 Season Peak (+520% Surge)",
+            "heat_badge": "🔥 Season Peak",
             "opportunity_score": 98,
             "tier": "Tier S",
             "aesthetic_vibe": "Autumn Harvest Farm Aesthetic in Golden Hour",
@@ -368,8 +388,14 @@ async def fetch_shopping_suggestions(seed_query: str, max_results: int = 6) -> l
 # that are NOT real Amazon listings. They exist so the Trend Radar UI can render
 # something useful while PA-API is offline. They must NEVER be ingested as real
 # Products — launch-campaign rejects them (see app/api/research.py).
+# Synthetic last-resort ASINs emitted by the matcher itself (B0SEARCH01 for the
+# query-shaped placeholder, B0DEMOASIN1 for asin-less fallbacks) are blocked too —
+# they are not seed data, so they are listed explicitly, not collected.
+_SYNTHETIC_ASINS = frozenset({"B0SEARCH01", "B0DEMOASIN1"})
+
+
 def _collect_demo_asins() -> frozenset[str]:
-    demo: set[str] = set()
+    demo: set[str] = set(_SYNTHETIC_ASINS)
     for seeds in TREND_SEEDS.values():
         for seed in seeds:
             for item in seed.get("fallback_products") or []:
@@ -547,8 +573,14 @@ async def match_amazon_products_for_trend(
     return results[:item_count]
 
 
-def _write_snapshot(dossiers: list[dict[str, Any]]) -> None:
-    """Persist the daily snapshot, merging existing dossiers by id so single-category scans don't wipe others."""
+def _write_snapshot(dossiers: list[dict[str, Any]], prune_missing_origin: str | None = None) -> None:
+    """Persist the daily snapshot, merging existing dossiers by id so single-category scans don't wipe others.
+
+    When prune_missing_origin is set (full scans only), previously stored
+    dossiers with that origin but absent from this batch are evicted — this
+    keeps dynamic entries (e.g. yesterday's Pinterest terms) from lingering
+    in the snapshot forever.
+    """
     try:
         snap_dir = Path(settings.storage_path) / "trend_radar"
         snap_dir.mkdir(parents=True, exist_ok=True)
@@ -569,11 +601,19 @@ def _write_snapshot(dossiers: list[dict[str, Any]]) -> None:
             if "id" in d:
                 merged_map[d["id"]] = d
 
+        if prune_missing_origin:
+            incoming_ids = {d["id"] for d in dossiers if "id" in d}
+            for did in [k for k, v in merged_map.items()
+                        if v.get("origin") == prune_missing_origin and k not in incoming_ids]:
+                del merged_map[did]
+
         all_dossiers = list(merged_map.values())
         all_dossiers.sort(key=lambda x: x.get("opportunity_score", 0), reverse=True)
 
         snap_file.write_text(
             json.dumps({
+                "snapshot_version": SNAPSHOT_VERSION,
+                "weights_fingerprint": _current_weights_fingerprint(),
                 "scanned_at": datetime.now(timezone.utc).isoformat(),
                 "count": len(all_dossiers),
                 "dossiers": all_dossiers,
@@ -584,12 +624,192 @@ def _write_snapshot(dossiers: list[dict[str, Any]]) -> None:
         logger.warning("Trend snapshot write failed: %s", e)
 
 
+def select_snapshot_dossiers(
+    payload: dict[str, Any] | None,
+    category: str | None,
+    max_age_s: float = 3600,
+    scanned_at_s: float | None = None,
+    now_s: float | None = None,
+) -> list[dict[str, Any]] | None:
+    """Validate a radar snapshot payload; return category-filtered dossiers or None.
+
+    Returns None (caller rescans live) when the payload is version-stale,
+    was computed under different scoring weights, is older than max_age_s,
+    or holds no rows for the requested category. Pure function for testability
+    (pass scanned_at_s/now_s to avoid clock dependence).
+    """
+    try:
+        if not isinstance(payload, dict):
+            return None
+        if payload.get("snapshot_version") != SNAPSHOT_VERSION:
+            return None
+        if payload.get("weights_fingerprint") != _current_weights_fingerprint():
+            return None
+        if scanned_at_s is not None and now_s is not None and (now_s - scanned_at_s) > max_age_s:
+            return None
+        dossiers = payload.get("dossiers") or []
+        if category and category != "all":
+            dossiers = [d for d in dossiers if d.get("category") == category]
+        return dossiers if dossiers else None
+    except Exception:
+        return None
+
+
 # ── Full Trend Discovery & Radar Generator ────────────────────────────────
 
-async def discover_trends_radar(category_filter: str | None = None) -> list[dict[str, Any]]:
+# Pinterest's own categories vs the radar's buckets: beauty content is
+# commerce-adjacent (nails, hair, cosmetics), so it maps to fashion. The raw
+# Pinterest category is preserved on the dossier as pinterest_category.
+_PINTEREST_CATEGORY_MAP = {"beauty": "fashion"}
+
+
+def _map_pinterest_category(raw: Any) -> str:
+    cat = str(raw or "fashion").strip().lower() or "fashion"
+    return _PINTEREST_CATEGORY_MAP.get(cat, cat)
+
+
+def _heat_for_mom(mom: Any) -> tuple[str, str]:
+    """Heat level/badge from measured MoM growth — thresholds only, no invented percentages."""
+    try:
+        m = float(mom or 0.0)
+    except (TypeError, ValueError):
+        m = 0.0
+    if m >= 300:
+        return "breakout", "🔥 Breakout"
+    if m >= 50:
+        return "rising", "📈 Trending"
+    if m > 0:
+        return "emerging", "🌱 Emerging"
+    return "steady", "📌 Evergreen"
+
+
+async def _fetch_pinterest_discovery(category_filter: str | None = None, limit: int = 6) -> list[dict[str, Any]]:
+    """Pull today's measured Pinterest trends (cache-first) for radar ingestion.
+
+    Reads the snapshot cache the daily scheduler warms — never forces a live
+    scrape from the radar path. Curated demo entries are never ingested as
+    discovery. Fail-soft per preset; raises only if the import itself fails.
     """
-    Generate the full Trend Radar feed by querying real-time Google Shopping
-    autocomplete and matching live high-EPC Amazon products.
+    from app.services.pinterest_trends_scraper import get_official_pinterest_trends
+
+    seen: set[str] = set()
+    collected: list[dict[str, Any]] = []
+    for preset in ("breakout", "growing", "top"):
+        try:
+            trends = await get_official_pinterest_trends(preset=preset, intent="all", force_refresh=False)
+        except Exception as e:
+            logger.warning("Pinterest discovery fetch failed for preset %r: %s", preset, e)
+            continue
+        for t in trends or []:
+            if not isinstance(t, dict) or t.get("is_fallback"):
+                continue
+            term = (t.get("term") or "").strip()
+            key = term.lower()
+            if not term or key in seen:
+                continue
+            seen.add(key)
+            collected.append(t)
+
+    if category_filter and category_filter != "all":
+        collected = [t for t in collected
+                     if _map_pinterest_category(t.get("category", "fashion")) == category_filter]
+
+    def _strength(t: dict[str, Any]) -> tuple[int, float]:
+        sc = t.get("search_count")
+        try:
+            return (1, float(sc)) if sc is not None else (0, 0.0)
+        except (TypeError, ValueError):
+            return (0, 0.0)
+
+    collected.sort(key=_strength, reverse=True)
+    return collected[:max(0, limit)]
+
+
+async def _build_pinterest_dossier(item: dict[str, Any]) -> dict[str, Any] | None:
+    """Build a radar dossier from one measured Pinterest trend.
+
+    Demand comes from Pinterest's measured 0-100 search_count when present;
+    only then does the breakdown claim demand_source "pinterest_measured".
+    Otherwise it degrades honestly to the autocomplete breadth proxy.
+    """
+    from app.config import settings as _settings
+
+    term = (item.get("term") or "").strip()
+    if not term:
+        return None
+    category = _map_pinterest_category(item.get("category", "fashion"))
+
+    signals = await _scan_seed_signals(term, category)
+    related = sorted(
+        {q for s in signals for q in s.queries},
+        key=lambda q: (len(q), q),
+    )[:8] or [term, f"{term} ideas", f"{term} 2026"]
+
+    # No curated fallbacks: offline/unknown terms simply match nothing.
+    matched_prods = await match_amazon_products_for_trend(query=term, category=category, item_count=2)
+
+    measured = item.get("search_count")
+    try:
+        measured_demand = max(0.0, min(100.0, float(measured))) if measured is not None else None
+    except (TypeError, ValueError):
+        measured_demand = None
+    proxy = _blend_signals(signals, products=matched_prods, related=related)
+    if measured_demand is None:
+        demand, demand_source = proxy["demand"], "autocomplete_breadth_proxy"
+    else:
+        demand, demand_source = measured_demand, "pinterest_measured"
+
+    _weights = _current_weights()
+    scored = score_trend(demand, proxy["money"], proxy["winnability"], weights=_weights)
+    scored["breakdown"]["weights_fingerprint"] = _weights_fingerprint(_weights)
+    scored["breakdown"]["demand_source"] = demand_source
+    scored["breakdown"]["money_source"] = proxy["money_source"]
+    scored["breakdown"]["winnability_source"] = proxy["winnability_source"]
+
+    heat_level, heat_badge = _heat_for_mom(item.get("mom_change"))
+    pack = build_pack(
+        primary=term, related_queries=related,
+        board_angle=item.get("recommended_board") or f"{term.title()} Ideas",
+        variations_count=4,
+    )
+    slug = re.sub(r"[^a-z0-9]+", "_", term.lower()).strip("_")
+    dossier = TrendDossier(
+        id=f"pin-trend-{slug}", title=term.title(), category=category,
+        heat_level=heat_level, heat_badge=heat_badge,
+        opportunity_score=int(scored["score"]),
+        tier=f"Tier {scored['tier']}",
+        aesthetic_vibe=f"Trending Pinterest {category.title()} Aesthetic",
+        outfit_or_scene=f"Natural lifestyle setting featuring {term}",
+        recommended_board=item.get("recommended_board") or f"{term.title()} Ideas",
+        related_queries=related, matched_products=matched_prods,
+        origin="pinterest_live",
+    )
+    out = dossier.to_dict()
+    out["score_breakdown"] = scored["breakdown"]
+    out["keyword_pack"] = pack.to_dict()
+    out["sources"] = [s.to_dict() for s in signals]
+    out["mom_change"] = item.get("mom_change")
+    out["wow_change"] = item.get("wow_change")
+    out["search_count"] = item.get("search_count")
+    out["sparkline"] = item.get("sparkline") or []
+    out["timeline_dates"] = item.get("timeline_dates") or []
+    out["pinterest_category"] = item.get("category")
+    out["provenance"] = "live"
+    return out
+
+
+async def discover_trends_radar(
+    category_filter: str | None = None,
+    include_pinterest: bool = True,
+    pinterest_limit: int = 6,
+) -> list[dict[str, Any]]:
+    """
+    Generate the full Trend Radar feed: curated seeds re-measured against
+    live autocomplete signals PLUS today's actually-trending Pinterest terms
+    ingested with their measured search momentum.
+
+    Pinterest ingestion is cache-first (the daily scheduler warms it) and
+    fail-soft — a broken scraper degrades to seeds-only, never to demo data.
     """
     categories = [category_filter] if category_filter and category_filter != "all" else list(TREND_SEEDS.keys())
 
@@ -605,9 +825,30 @@ async def discover_trends_radar(category_filter: str | None = None) -> list[dict
             tasks.append(_gated(seed))
 
     results = await asyncio.gather(*tasks, return_exceptions=False)
+
+    if include_pinterest:
+        try:
+            pin_items = await _fetch_pinterest_discovery(category_filter, limit=pinterest_limit)
+        except Exception as e:
+            logger.warning("Pinterest discovery failed, continuing seeds-only: %s", e)
+            pin_items = []
+
+        async def _gated_pin(item: dict[str, Any]) -> dict[str, Any] | None:
+            async with _SCAN_SEMAPHORE:
+                return await _build_pinterest_dossier(item)
+
+        pin_dossiers = await asyncio.gather(
+            *(_gated_pin(i) for i in pin_items), return_exceptions=False
+        )
+        results.extend(d for d in pin_dossiers if d)
+
     # Sort by opportunity score descending (Tier S first)
     sorted_dossiers = sorted(results, key=lambda x: x.get("opportunity_score", 0), reverse=True)
-    _write_snapshot(sorted_dossiers)
+    full_scan = not category_filter or category_filter == "all"
+    _write_snapshot(
+        sorted_dossiers,
+        prune_missing_origin="pinterest_live" if full_scan else None,
+    )
     return sorted_dossiers
 
 
@@ -622,12 +863,64 @@ async def _scan_seed_signals(seed_query: str, category: str) -> list[SourceSigna
     return list(results)
 
 
-def _blend_signals(signals: list[SourceSignal]) -> dict[str, float]:
-    """Demand = mean of fresh hints (0 when all stale); money/winnability
-    stay heuristic until PA-API + brand analysis feed them (follow-up)."""
+def _money_from_products(products: list[dict[str, Any]] | None) -> tuple[float, str]:
+    """Monetization score from LIVE matched products only (demo placeholders excluded).
+
+    Composite of buyer approval (avg rating / 5) and commercial validation
+    (log-scaled review volume). No live products → neutral 50.0, explicitly
+    sourced as "neutral_no_data" rather than presented as measured.
+    """
+    import math
+
+    live = [p for p in (products or []) if isinstance(p, dict) and not p.get("demo_only")]
+    if not live:
+        return 50.0, "neutral_no_data"
+
+    def _num(p: dict[str, Any], key: str) -> float:
+        try:
+            return max(0.0, float(p.get(key) or 0))
+        except (TypeError, ValueError):
+            return 0.0
+
+    ratings = [_num(p, "rating") for p in live]
+    ratings = [r for r in ratings if 0 < r <= 5.0]
+    rating_score = (sum(ratings) / len(ratings) / 5.0 * 100.0) if ratings else 50.0
+    total_reviews = sum(_num(p, "review_count") for p in live)
+    volume_score = min(100.0, 20.0 * math.log10(1.0 + total_reviews))
+    return round(0.5 * rating_score + 0.5 * volume_score, 1), "live_products"
+
+
+def _winnability_from_angles(related: Sequence[str] | None) -> float:
+    """Angle-breadth proxy: distinct long-tail variations ≈ distinct
+    low-competition entry angles for a small creator. Labeled as a proxy,
+    not a measured competition rate (no competition API is available)."""
+    n = len(related or [])
+    return round(min(100.0, 30.0 + 8.0 * n), 1)
+
+
+def _blend_signals(
+    signals: list[SourceSignal],
+    products: list[dict[str, Any]] | None = None,
+    related: Sequence[str] | None = None,
+) -> dict[str, Any]:
+    """Blend three 0-100 signals with per-input provenance.
+
+    Demand = mean of fresh hints (0 when all stale) — an autocomplete-BREADTH
+    proxy (formulas of suggestion counts), NOT a measured demand rate, unless
+    the caller overrides it with measured data. Money is computed from live
+    matched products; winnability from angle breadth. No input is a silent
+    constant anymore: each carries a *_source label into the breakdown.
+    """
     fresh = [s.demand_hint for s in signals if s.status == "fresh"]
     demand = sum(fresh) / len(fresh) if fresh else 0.0
-    return {"demand": round(demand, 1), "money": 50.0, "winnability": 50.0}
+    money, money_source = _money_from_products(products)
+    return {
+        "demand": round(demand, 1),
+        "money": money,
+        "money_source": money_source,
+        "winnability": _winnability_from_angles(related),
+        "winnability_source": "angle_breadth_proxy",
+    }
 
 
 async def _build_trend_dossier(seed: dict[str, Any]) -> dict[str, Any]:
@@ -638,17 +931,6 @@ async def _build_trend_dossier(seed: dict[str, Any]) -> dict[str, Any]:
     category = seed.get("category", "fashion")
 
     signals = await _scan_seed_signals(seed_query, category)
-    blended = _blend_signals(signals)
-    _weights = {
-        "demand": _settings.trend_weight_demand,
-        "money": _settings.trend_weight_money,
-        "winnability": _settings.trend_weight_winnability,
-    }
-    scored = score_trend(
-        blended["demand"], blended["money"], blended["winnability"],
-        weights=_weights,
-    )
-    scored["breakdown"]["weights_fingerprint"] = _weights_fingerprint(_weights)
     related = sorted(
         {q for s in signals for q in s.queries},
         key=lambda q: (len(q), q),
@@ -658,6 +940,16 @@ async def _build_trend_dossier(seed: dict[str, Any]) -> dict[str, Any]:
         query=related[0], category=category,
         fallback_items=seed.get("fallback_products"), item_count=2,
     )
+    blended = _blend_signals(signals, products=matched_prods, related=related)
+    _weights = _current_weights()
+    scored = score_trend(
+        blended["demand"], blended["money"], blended["winnability"],
+        weights=_weights,
+    )
+    scored["breakdown"]["weights_fingerprint"] = _weights_fingerprint(_weights)
+    scored["breakdown"]["demand_source"] = "autocomplete_breadth_proxy"
+    scored["breakdown"]["money_source"] = blended["money_source"]
+    scored["breakdown"]["winnability_source"] = blended["winnability_source"]
     pack = build_pack(
         primary=related[0], related_queries=related,
         board_angle=seed.get("recommended_board", ""),
@@ -732,32 +1024,38 @@ async def analyze_custom_trend_query(query: str, category: str = "fashion", refr
     if not clean_q:
         raise ValueError("Search query cannot be empty")
 
-    key = re.sub(r"[^a-z0-9]+", "_", clean_q.lower()).strip("_") + f"__{re.sub(r'[^a-z0-9]+', '_', category.lower()).strip('_')}"
+    # Fingerprint in the key: weight changes must not serve stale scores,
+    # and old key formats are ignored rather than migrated.
+    key = (
+        re.sub(r"[^a-z0-9]+", "_", clean_q.lower()).strip("_")
+        + f"__{re.sub(r'[^a-z0-9]+', '_', category.lower()).strip('_')}"
+        + f"__{_current_weights_fingerprint()}"
+    )
     if not refresh:
         cached = _read_custom_cache(key)
         if cached is not None:
             return cached
 
-    # 1. Live multi-source scan + blended computed score (settings weights).
+    # 1. Live multi-source scan for related angles.
     signals = await _scan_seed_signals(clean_q, category)
-    blended = _blend_signals(signals)
-    _weights = {
-        "demand": _settings.trend_weight_demand,
-        "money": _settings.trend_weight_money,
-        "winnability": _settings.trend_weight_winnability,
-    }
-    scored = score_trend(
-        blended["demand"], blended["money"], blended["winnability"],
-        weights=_weights,
-    )
-    scored["breakdown"]["weights_fingerprint"] = _weights_fingerprint(_weights)
     related = sorted(
         {q for s in signals for q in s.queries},
         key=lambda q: (len(q), q),
     )[:8] or [clean_q, f"{clean_q} aesthetic", f"{clean_q} 2026", f"best {clean_q} amazon"]
 
-    # 2. Live Amazon match (fail-soft inside; returns [] when offline).
+    # 2. Live Amazon match (fail-soft inside; returns [] when offline), then
+    # blended score with real money/winnability inputs (settings weights).
     products = await match_amazon_products_for_trend(clean_q, category=category, item_count=3)
+    blended = _blend_signals(signals, products=products, related=related)
+    _weights = _current_weights()
+    scored = score_trend(
+        blended["demand"], blended["money"], blended["winnability"],
+        weights=_weights,
+    )
+    scored["breakdown"]["weights_fingerprint"] = _weights_fingerprint(_weights)
+    scored["breakdown"]["demand_source"] = "autocomplete_breadth_proxy"
+    scored["breakdown"]["money_source"] = blended["money_source"]
+    scored["breakdown"]["winnability_source"] = blended["winnability_source"]
 
     # 3. Deterministic keyword pack + seasonal display rule (display only).
     title = clean_q.title()
@@ -769,7 +1067,9 @@ async def analyze_custom_trend_query(query: str, category: str = "fashion", refr
     q_lower = clean_q.lower()
     is_seasonal = any(k in q_lower for k in ("fall", "autumn", "halloween", "holiday", "christmas", "summer", "spring"))
     heat_level = "breakout" if is_seasonal else "rising"
-    heat_badge = "🔥 Seasonal Breakout (+350%)" if is_seasonal else "📈 Trending (+180% Search Demand)"
+    # Display-only seasonal hint. Demand here is a 0-100 autocomplete blend —
+    # no measured growth percentage exists — so the badge must not invent one.
+    heat_badge = "🔥 Seasonal Breakout" if is_seasonal else "📈 Trending"
 
     dossier = TrendDossier(
         id=re.sub(r"[^a-z0-9]+", "_", clean_q.lower()).strip("_"),
@@ -784,6 +1084,7 @@ async def analyze_custom_trend_query(query: str, category: str = "fashion", refr
         recommended_board=f"{title} Ideas",
         related_queries=related,
         matched_products=products,
+        origin="custom_query",
     )
 
     out = dossier.to_dict()
