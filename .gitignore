@@ -61,3 +61,4 @@ vault_backup_*.zip
 frontend/vite.config.ts.timestamp-*
 .claude/
 vault/02 - Bugs & Issues/_Archive - Auto Bugs/
+.superpowers/

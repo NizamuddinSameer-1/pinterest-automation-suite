@@ -126,7 +126,7 @@ def test_get_taxonomy_context_tech():
 @pytest.mark.asyncio
 async def test_generate_bridge_copy_fails_loud_on_llm_error():
     """Assert BridgeCopyUnavailable is raised when LLM fails (no silent fake fallback)."""
-    with patch("app.providers.llm.llm.structured_output", new_callable=AsyncMock) as mock_llm:
+    with patch("app.providers.llm.content_llm.structured_output", new_callable=AsyncMock) as mock_llm:
         mock_llm.side_effect = RuntimeError("LLM rate limited or timed out")
 
         product = {"name": "Test Product", "category": "General"}
@@ -245,3 +245,175 @@ async def test_sitemap_and_robots_generation(tmp_path):
     robots_content = robots_file.read_text(encoding="utf-8")
     assert "User-agent: *" in robots_content
     assert "Sitemap:" in robots_content
+
+
+# ── 7. TL;DR Decision Card & Deal-Breaker Tests ─────────────────────────
+
+def test_tldr_decision_card_enforced():
+    """Verify TL;DR decision card is populated and synchronized with quick_verdict."""
+    mock_copy = {
+        "headline": "The Practical Guide",
+        "quick_verdict": {
+            "why_worth_it": "High durability and reliable heat retention",
+        },
+        "pros_cons": {
+            "pros": ["Even heating"],
+            "cons": ["Heavy tare weight"],
+        },
+    }
+    product_data = {
+        "name": "Enameled Cast Iron Dutch Oven",
+        "brand": "Lodge",
+    }
+
+    verified = verify_grounded_copy(mock_copy, product_data)
+    assert "tldr_card" in verified
+    tldr = verified["tldr_card"]
+    assert tldr["top_pick"] == "Enameled Cast Iron Dutch Oven"
+    assert "durability" in tldr["key_advantage"].lower() or "heating" in tldr["key_advantage"].lower()
+    assert "heavy" in tldr["main_limitation"].lower()
+    assert "Amazon" in tldr["action_cta"]
+    # Check quick_verdict synchronization
+    assert verified["quick_verdict"]["key_advantage"] == tldr["key_advantage"]
+    assert verified["quick_verdict"]["main_limitation"] == tldr["main_limitation"]
+
+
+def test_strictly_skip_deal_breakers_synchronized():
+    """Verify who_should_strictly_skip and who_should_skip are synchronized."""
+    mock_copy_1 = {
+        "buyer_persona": {
+            "who_should_buy": ["Home chefs"],
+            "who_should_strictly_skip": [
+                "Owners of stemware with base diameter exceeding 3.1 inches",
+                "High-pile carpet installations",
+            ],
+        }
+    }
+    verified_1 = verify_grounded_copy(mock_copy_1, {"name": "Bar Cart"})
+    bp_1 = verified_1["buyer_persona"]
+    assert bp_1["who_should_skip"] == bp_1["who_should_strictly_skip"]
+    assert len(bp_1["who_should_strictly_skip"]) == 2
+
+    # Verify reverse sync (who_should_skip -> who_should_strictly_skip)
+    mock_copy_2 = {
+        "buyer_persona": {
+            "who_should_buy": ["Home chefs"],
+            "who_should_skip": ["Ultra-lightweight backpackers"],
+        }
+    }
+    verified_2 = verify_grounded_copy(mock_copy_2, {"name": "Dutch Oven"})
+    bp_2 = verified_2["buyer_persona"]
+    assert bp_2["who_should_strictly_skip"] == ["Ultra-lightweight backpackers"]
+
+
+def test_micro_commitment_cta_hierarchy_no_banned_words():
+    """Ensure all taxonomy categories use micro-commitment CTAs and contain zero banned phrases."""
+    banned_words = ["buy now", "shop this look", "get it on amazon", "click here", "purchase today", "order today"]
+
+    taxonomies = [
+        {"name": "Dutch Oven", "category": "Cookware"},
+        {"name": "Noise Canceling Headphones", "category": "Electronics"},
+        {"name": "Hydrating Face Serum", "category": "Beauty"},
+        {"name": "Lace Slip Midi Skirt", "category": "Clothing"},
+        {"name": "General Accent Table", "category": "Furniture"},
+    ]
+
+    for prod in taxonomies:
+        ctx = _get_taxonomy_context(prod)
+        for cta_key in ("hero_cta", "look_cta", "mid_cta", "bottom_cta", "sticky_cta"):
+            cta_val = ctx[cta_key].lower()
+            for banned in banned_words:
+                assert banned not in cta_val, f"Found banned phrase '{banned}' in {prod['category']} {cta_key}: '{ctx[cta_key]}'"
+            # Ensure low-friction intent indicators
+            assert any(term in cta_val for term in ["check", "view", "verify", "compare"]), f"Missing intent term in {cta_key}: '{ctx[cta_key]}'"
+
+
+@pytest.mark.asyncio
+async def test_generate_lookbook_html_renders_tldr_and_skip_dealbreakers(tmp_path):
+    """Verify rendered lookbook HTML includes the TL;DR Decision Card and Who Should Strictly Skip This."""
+    from PIL import Image
+    dummy_img = tmp_path / "img_tldr.jpg"
+    im = Image.new("RGB", (100, 100), color="green")
+    im.save(dummy_img, format="JPEG")
+
+    mock_copy = {
+        "headline": "VASAGLE 3-Tier Bar Cart Guide",
+        "subheadline": "Compact aesthetic entertaining cart",
+        "author_name": "SmartPickr Editorial Team",
+        "quick_verdict": {
+            "best_for": "Small apartments",
+            "why_worth_it": "Compact 11.8-inch depth with stable steel frame",
+            "key_advantage": "Compact 11.8-inch depth with stable steel frame",
+            "main_limitation": "Stemware tracks fit bases up to 3.1 inches wide",
+            "scenario_badge": "Editor's Pick",
+            "star_rating": "4.7",
+            "rating_count": "1,500 Ratings",
+        },
+        "tldr_card": {
+            "top_pick": "VASAGLE Slim 3-Tier Bar Cart",
+            "key_advantage": "Compact 11.8-inch depth with stable steel frame",
+            "main_limitation": "Stemware tracks fit glass bases up to 3.1 inches wide",
+            "action_cta": "Check Current Amazon Price →",
+        },
+        "looks": [
+            {
+                "look_number": 1,
+                "look_title": "Perspective #1: Narrow Hallway Staging",
+                "look_subtitle": "Compact proportions in tight spaces",
+                "look_story": "Visual inspection shows slim 11.8-inch clearance.",
+                "styling_advice": "Pair with minimalist glassware.",
+                "angle_badge": "Perspective #1",
+                "inline_cta": "View Full Dimensions & Color Options on Amazon →",
+            }
+        ],
+        "buyer_persona": {
+            "who_should_buy": ["Apartment dwellers"],
+            "who_should_strictly_skip": [
+                "Owners of large-base glassware exceeding 3.1 inches",
+                "High-pile carpet installations",
+            ],
+            "who_should_skip": [
+                "Owners of large-base glassware exceeding 3.1 inches",
+                "High-pile carpet installations",
+            ],
+        },
+        "staged_ctas": {
+            "hero_cta": "Check Current Amazon Price →",
+            "bottom_cta": "Compare Prices Across Finishes on Amazon →",
+            "sticky_cta": "Check Current Amazon Price →",
+        },
+    }
+
+    product_data = {
+        "name": "VASAGLE Slim 3-Tier Bar Cart",
+        "brand": "VASAGLE",
+        "price": 65.99,
+        "category": "Home Decor",
+    }
+
+    slug, html, _ = await generate_lookbook_html(
+        job_id="test-tldr-render",
+        product_data=product_data,
+        image_paths=[str(dummy_img)],
+        copy_data=mock_copy,
+    )
+
+    # 1. Assert TL;DR Decision Card elements in HTML
+    assert "tldr-decision-card" in html
+    assert "TL;DR Quick-Select Decision Card" in html
+    assert "VASAGLE Slim 3-Tier Bar Cart" in html
+    assert "Compact 11.8-inch depth with stable steel frame" in html
+    assert "Stemware tracks fit glass bases up to 3.1 inches wide" in html
+
+    # 2. Assert "Who Should Strictly Skip This" deal-breakers header and items
+    assert "Who Should Strictly Skip This:" in html
+    assert "Owners of large-base glassware exceeding 3.1 inches" in html
+    assert "High-pile carpet installations" in html
+
+    # 3. Assert micro-commitment CTAs
+    assert "Check Current Amazon Price →" in html
+    assert ("View Full Dimensions & Color Options on Amazon →" in html or "View Full Dimensions &amp; Color Options on Amazon →" in html)
+    assert "Compare Prices Across Finishes on Amazon →" in html
+    assert "Buy Now" not in html
+    assert "Shop This Look" not in html
+    assert "Get It on Amazon" not in html

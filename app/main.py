@@ -19,7 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from app.api import amazon, debug, generation, jobs, library, lookbooks, pins, products, references
+from app.api import amazon, debug, generation, jobs, library, lookbooks, pins, products, references, research
 from app.config import settings
 from app.database import init_db
 from app.services.error_diagnostics import record_diagnostic_error
@@ -45,6 +45,8 @@ async def lifespan(app: FastAPI):
     # closed publish on the next tick instead of being stranded.
     from app.services.scheduler import start_scheduler, stop_scheduler
     start_scheduler()
+    from app.services.trend_scheduler import start_trend_scan
+    start_trend_scan()
 
     # Recover any generation jobs stranded in GENERATING if the server was restarted
     try:
@@ -62,7 +64,9 @@ async def lifespan(app: FastAPI):
     yield
 
     logger.info("Shutting down scheduler...")
-    stop_scheduler()
+    await stop_scheduler()
+    from app.services.trend_scheduler import stop_trend_scan
+    await stop_trend_scan()
 
 
 app = FastAPI(
@@ -96,6 +100,7 @@ app.include_router(debug.router)
 app.include_router(lookbooks.router)
 app.include_router(amazon.router)
 app.include_router(library.router)
+app.include_router(research.router)
 
 
 # ── Health Check ─────────────────────────────────
@@ -109,6 +114,11 @@ async def health_check():
             "primary": "opencode.ai" if settings.opencode_api_key else "openrouter/gemini",
             "text": settings.opencode_text_model if settings.opencode_api_key else settings.openrouter_model,
             "vision": settings.opencode_vision_model if settings.opencode_api_key else settings.gemini_model,
+            "content_lane_configured": bool(
+                settings.content_openrouter_api_key
+                or settings.content_gemini_api_key
+                or settings.content_opencode_api_key
+            ),
         },
     }
 

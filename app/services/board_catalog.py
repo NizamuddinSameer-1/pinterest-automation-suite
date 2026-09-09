@@ -33,9 +33,11 @@ The contract is deliberately narrow:
 
 from __future__ import annotations
 
+import difflib
 import json
 import logging
 import os
+import re
 import subprocess
 import sys
 from dataclasses import dataclass
@@ -190,6 +192,75 @@ def match(board_name: str | None, boards: Sequence[str]) -> str | None:
     return None
 
 
+def find_best_board_match(
+    wanted: str | None,
+    boards: Sequence[str],
+    *,
+    threshold: float = 0.5,
+) -> str | None:
+    """
+    Find the closest existing board from `boards` for `wanted`.
+    Returns the exact catalogued spelling of the best matching board, or None.
+    """
+    if not wanted or not boards:
+        return None
+
+    exact = match(wanted, boards)
+    if exact is not None:
+        return exact
+
+    w_norm = normalise(wanted)
+    w_tokens = set(re.findall(r"\w+", w_norm))
+    if not w_norm or not w_tokens:
+        return None
+
+    best_board: str | None = None
+    best_score = 0.0
+
+    for candidate in boards:
+        c_norm = normalise(candidate)
+        if not c_norm:
+            continue
+        c_tokens = set(re.findall(r"\w+", c_norm))
+        if not c_tokens:
+            continue
+
+        score = 0.0
+
+        # Substring / containment check
+        if w_norm in c_norm or c_norm in w_norm:
+            containment = min(len(w_norm), len(c_norm)) / max(len(w_norm), len(c_norm))
+            score = max(score, 0.75 + 0.25 * containment)
+
+        # Token set Jaccard and overlap
+        intersection = len(w_tokens & c_tokens)
+        if intersection > 0:
+            union = len(w_tokens | c_tokens)
+            jaccard = intersection / union if union else 0.0
+            overlap = intersection / len(w_tokens)
+            token_score = 0.6 * jaccard + 0.4 * overlap
+            score = max(score, token_score)
+
+        # Difflib sequence similarity
+        seq_ratio = difflib.SequenceMatcher(None, w_norm, c_norm).ratio()
+        score = max(score, seq_ratio * 0.85)
+
+        if score > best_score:
+            best_score = score
+            best_board = candidate
+
+    if best_score >= threshold:
+        logger.info(
+            "Matched board %r to existing catalog board %r (confidence: %.2f)",
+            wanted,
+            best_board,
+            best_score,
+        )
+        return best_board
+
+    return None
+
+
 def close_names(board_name: str | None, boards: Sequence[str], *, limit: int = 3) -> list[str]:
     """
     Catalogued boards worth *suggesting* for a name that did not match.
@@ -205,6 +276,7 @@ def close_names(board_name: str | None, boards: Sequence[str], *, limit: int = 3
 
 #: `verdict` values. Checked by pins.py and by scripts/verify/verify_board_catalog.py.
 OK = "ok"
+WILL_CREATE = "will_create"
 UNKNOWN_BOARD = "unknown_board"
 NO_BOARD = "no_board"
 NO_CATALOG = "no_catalog"
@@ -253,7 +325,13 @@ def _ago(catalog: Catalog) -> str:
         return f"{age / 3600:.0f} hours ago"
     return f"{age / 86400:.0f} days ago"
 
-def check_board(board_name: str | None, *, fallback: str | None = None, profile_id: str | None = None) -> BoardCheck:
+def check_board(
+    board_name: str | None,
+    *,
+    fallback: str | None = None,
+    profile_id: str | None = None,
+    auto_create: bool | None = None,
+) -> BoardCheck:
     """
     Judge a pin's board against the catalogue for a given profile, before anything is launched.
     """
@@ -282,6 +360,33 @@ def check_board(board_name: str | None, *, fallback: str | None = None, profile_
 
     hit = match(resolved, catalog.boards)
     if hit is None:
+        # Check if an existing board is a close/semantic match first
+        fuzzy_hit = find_best_board_match(resolved, catalog.boards)
+        if fuzzy_hit is not None:
+            return BoardCheck(
+                verdict=OK,
+                requested=requested,
+                resolved=fuzzy_hit,
+                catalog=catalog,
+                message=f"Board {resolved!r} resolved to existing Pinterest board {fuzzy_hit!r}.",
+            )
+
+        # Check if automatic board creation is enabled
+        from app.config import settings
+        allow_create = auto_create if auto_create is not None else getattr(settings, "auto_create_boards", True)
+        if allow_create:
+            return BoardCheck(
+                verdict=WILL_CREATE,
+                requested=requested,
+                resolved=resolved,
+                catalog=catalog,
+                message=(
+                    f"Board {resolved!r} is not yet in account {profile_id or 'default'}. "
+                    "Auto-create is enabled, so it will be automatically created on Pinterest "
+                    "during publishing."
+                ),
+            )
+
         suggestions = close_names(resolved, catalog.boards)
         hint = f" Closest boards you do have: {', '.join(suggestions)}." if suggestions else ""
         return BoardCheck(

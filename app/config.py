@@ -47,6 +47,31 @@ class Settings(BaseSettings):
     gemini_api_key: str = ""
     gemini_model: str = "gemini-3-flash-preview"
     gemini_vision_model: str = "gemini-3-flash-preview"
+    # ── NVIDIA NIM (Direct Provider) ─────────────
+    nvidia_api_key: str = ""
+    nvidia_base_url: str = "https://integrate.api.nvidia.com/v1"
+    nvidia_model: str = "meta/llama-3.2-11b-vision-instruct"
+
+    # ── Content Lane Providers (Lane 2: blogs, pins, SEO, post copy) ──
+    # Dedicated key set so long-form editorial calls never starve the
+    # reference/vision/prompt lane. Empty = fall back to the primary keys
+    # above, so single-key setups keep working with zero changes.
+    content_nvidia_api_key: str = ""
+    content_nvidia_base_url: str = "https://integrate.api.nvidia.com/v1"
+    content_nvidia_model: str = "meta/llama-3.2-11b-vision-instruct"
+
+    content_opencode_api_key: str = ""
+    content_opencode_base_url: str = ""
+    content_opencode_text_model: str = ""
+    content_opencode_vision_model: str = ""
+
+    content_openrouter_api_key: str = ""
+    content_openrouter_base_url: str = ""
+    content_openrouter_model: str = ""
+
+    content_gemini_api_key: str = ""
+    content_gemini_model: str = ""
+    content_gemini_vision_model: str = ""
 
     # ── Pinterest API (Phase 3) ──────────────────
     pinterest_client_id: str = ""
@@ -85,6 +110,13 @@ class Settings(BaseSettings):
     # in the publisher, both generation paths and the batch upload route, so
     # changing boards meant editing four files.
     default_board_name: str = "Just Random Photography"
+    auto_create_boards: bool = True  # Automatically create boards on Pinterest if missing
+    # ── Trend Radar v2 scan ────────────────────────
+    trend_scan_enabled: bool = True
+    trend_scan_interval_hours: int = 24
+    trend_weight_demand: float = 0.40
+    trend_weight_money: float = 0.35
+    trend_weight_winnability: float = 0.25
 
     # ── Pin scheduler ────────────────────────────
     # The in-process loop in app/services/scheduler.py that drains

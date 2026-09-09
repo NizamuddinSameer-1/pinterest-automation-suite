@@ -94,8 +94,9 @@ GENERATION_TIMEOUT_SECONDS = 210
 
 #: If Flow has not even *asked* its backend to render by now, it never will. The
 #: submit reached the page but produced no generation call, and sitting out the
-#: remaining timeout only delays the report.
-NO_REQUEST_GIVE_UP_SECONDS = 45.0
+#: remaining timeout only delays the report. Generous on purpose (75s) to allow
+#: Google Flow's model to register and render without premature aborts.
+NO_REQUEST_GIVE_UP_SECONDS = 75.0
 
 #: Playwright errors that mean "the page moved while you were talking to it".
 #: These are retryable; anything else is a real scripting or page error and is
@@ -670,24 +671,36 @@ class _GenerationWatcher:
         if status >= 400:
             self.notes.append(f"{path} answered HTTP {status}")
             return
+        payload = None
+        raw_text = None
         try:
             payload = await response.json()
-        except Exception as e:  # noqa: BLE001 — a non-JSON body is a note, not a crash
-            self.notes.append(f"{path}: body was not JSON ({type(e).__name__})")
-            return
+        except Exception as e:
+            # Batchexecute responses use )]}' anti-XSSI header or raw text
+            try:
+                raw_text = await response.text()
+            except Exception as e_text:
+                self.notes.append(f"{path}: body was not JSON or readable text ({type(e).__name__}, {type(e_text).__name__})")
+                return
 
         before = self.harvest.total
-        harvest_media(payload, self.harvest)
+        if payload is not None:
+            harvest_media(payload, self.harvest)
+            try:
+                self.variations.extend(harvest_variations(payload))
+            except Exception:
+                self.variations = self.variations or []
+            self.shapes.append(describe_shape(payload))
+        elif raw_text:
+            harvest_media(raw_text, self.harvest)
+            self.shapes.append(f"raw_text[{len(raw_text)} chars]")
+
         gained = self.harvest.total - before
-        try:
-            self.variations.extend(harvest_variations(payload))
-        except Exception:  # noqa: BLE001 — flat harvest still stands; upscale just skips
-            self.variations = self.variations or []
-        self.shapes.append(describe_shape(payload))
-        print(
-            f"📡 [FLOW AUTOMATOR] {path} → HTTP {status}, "
-            f"{gained} media reference(s) attributable to this submit."
-        )
+        if gained:
+            print(
+                f"📡 [FLOW AUTOMATOR] {path} → HTTP {status}, "
+                f"{gained} media reference(s) attributable to this submit."
+            )
 
 
 # ── talking to the prompt bar ───────────────────────────────────────────
@@ -1203,6 +1216,11 @@ async def _fetch_media(page, url: str) -> bytes | None:
     version fell back to and which made failed renders indistinguishable from
     successful ones.
     """
+    # Upgrade /asb/ preview URLs to full resolution =s0
+    import re
+    if "/asb/" in url and "=s" in url:
+        url = re.sub(r"=s\d+.*$", "=s0", url)
+
     try:
         response = await page.request.get(url)
         if response.status == 200:
@@ -1236,6 +1254,40 @@ async def _fetch_media(page, url: str) -> bytes | None:
     except (ValueError, TypeError):
         return None
     return body if len(body) >= MIN_IMAGE_BYTES else None
+
+
+async def _get_canvas_media_urls(page) -> list[str]:
+    """
+    Get all generated image URLs currently mounted on the Flow canvas.
+    Excludes data: URIs, SVG icons, and avatars. Normalizes /asb/ URLs with =s0.
+    """
+    try:
+        urls = await _safe_eval(page, """
+            () => {
+                const imgs = Array.from(document.querySelectorAll('img'));
+                const results = [];
+                for (const img of imgs) {
+                    const src = img.src || '';
+                    if (!src || src.startsWith('data:') || src.includes('avatar') || src.includes('googleusercontent.com/a/')) {
+                        continue;
+                    }
+                    if (src.includes('/asb/') || src.includes('getMediaUrlRedirect')) {
+                        results.push(src);
+                    }
+                }
+                return results;
+            }
+        """, what="get canvas media urls") or []
+        normalized = []
+        import re
+        for u in urls:
+            u_clean = re.sub(r'=s\d+.*$', '=s0', u) if '/asb/' in u else u
+            if u_clean not in normalized:
+                normalized.append(u_clean)
+        return normalized
+    except Exception as e:
+        logger.warning("Could not read canvas media URLs: %s", e)
+        return []
 
 
 async def _save_harvest(
@@ -1452,14 +1504,12 @@ async def generate_flow_batch_automated(job_id: str, prompt: str, count: int = 4
             raise
         print(f"📂 [FLOW AUTOMATOR] Workspace: {project_url}")
 
-        # Informational only. This count is never used to decide ownership — the
-        # canvas holds every past generation, and reading it for attribution is
-        # exactly the bug this rewrite removes.
-        canvas_before = await _safe_eval(page, """
-            () => document.querySelectorAll('img[src*="getMediaUrlRedirect"]').length
-        """, what="count canvas images")
-        print(f"ℹ️ [FLOW AUTOMATOR] Project canvas currently shows {canvas_before} image(s) "
-              "(not used for attribution).")
+        # Dual-layer baseline: snapshot all existing media images on the canvas.
+        # Flow renders generations directly onto the canvas cards, so diffing against
+        # this baseline lets us capture the exact new variations even if Google's
+        # internal RPC endpoints change protocol or obfuscate payloads.
+        canvas_baseline_urls = set(await _get_canvas_media_urls(page))
+        print(f"ℹ️ [FLOW AUTOMATOR] Project canvas currently shows {len(canvas_baseline_urls)} media image(s) (baseline snapshot).")
 
         watcher = _GenerationWatcher(page)
         watcher.attach()
@@ -1482,7 +1532,7 @@ async def generate_flow_batch_automated(job_id: str, prompt: str, count: int = 4
             raise
         print(f"⚡ [FLOW AUTOMATOR] Submitted via {clicked}")
 
-        # Step 5: wait for Flow to answer, not for the canvas to look right.
+        # Step 5: wait for Flow to answer via network responses or newly mounted canvas cards.
         deadline = asyncio.get_event_loop().time() + GENERATION_TIMEOUT_SECONDS
         started_at = asyncio.get_event_loop().time()
         first_media_at: float | None = None
@@ -1491,6 +1541,15 @@ async def generate_flow_batch_automated(job_id: str, prompt: str, count: int = 4
             await asyncio.sleep(1.5)
             tick += 1
             now = asyncio.get_event_loop().time()
+
+            # Dual-layer check: poll canvas for newly appeared generated images
+            if watcher.harvest.total < count:
+                current_canvas = await _get_canvas_media_urls(page)
+                new_on_canvas = [u for u in current_canvas if u not in canvas_baseline_urls]
+                for u in new_on_canvas:
+                    if u not in watcher.harvest.urls:
+                        watcher.harvest.urls.append(u)
+                        print(f"🖼️ [FLOW AUTOMATOR] Captured newly generated canvas variation: {u[:70]}...")
 
             if watcher.harvest.total and first_media_at is None:
                 first_media_at = now
@@ -1505,8 +1564,9 @@ async def generate_flow_batch_automated(job_id: str, prompt: str, count: int = 4
                 break
             # No generation request at all after a generous window means the submit
             # was accepted by the page but Flow never asked its backend to render.
-            # Waiting out the remaining ~2.5 minutes cannot change that.
+            # Only give up if neither request was sent nor submit was confirmed by prompt clear.
             if (not watcher.generation_requests and not watcher.harvest.total
+                    and "confirmed by prompt bar cleared" not in clicked
                     and now - started_at > NO_REQUEST_GIVE_UP_SECONDS):
                 print("⚠️ [FLOW AUTOMATOR] No generation request left the browser in "
                       f"{NO_REQUEST_GIVE_UP_SECONDS:.0f}s — not waiting out the timeout.")

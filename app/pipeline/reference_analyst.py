@@ -78,6 +78,7 @@ ANALYSIS DIMENSIONS:
    landscape), set "is_single_product": false and leave the lists empty.
 
 RULES:
+- Chain-of-Thought: Begin by filling `_forensic_observations` with concise, step-by-step observations of the image's physical reality (light direction, tactile textures, focal depth, subject details) before selecting categorical values.
 - Include a confidence level (high/medium/low) for uncertain fields.
 - Never hallucinate exact metadata (camera model, store name) that
   cannot be inferred.
@@ -85,6 +86,7 @@ RULES:
 
 OUTPUT SCHEMA:
 {
+  "_forensic_observations": "string — step-by-step visual audit of lighting, surface textures, focal falloff, and physical object details",
   "subject": {
     "primary_category": "string",
     "secondary_category": "string or null",
@@ -184,6 +186,7 @@ async def analyze_reference(image_path: str) -> dict[str, Any]:
         prompt=prompt,
         image_path=image_path,
         system=SYSTEM_PROMPT,
+        temperature=0.1,
     )
 
     # visual_dna consumes this analysis; an empty or off-schema reply must not

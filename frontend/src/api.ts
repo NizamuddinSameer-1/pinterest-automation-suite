@@ -879,7 +879,238 @@ export const api = {
     }
     return res.json();
   },
+
+  // ── Trend Research Radar ─────────────────────
+  getTrends: async (category?: string, refresh: boolean = false): Promise<{ success: boolean; category: string; count: number; trends: TrendDossier[] }> => {
+    const params = new URLSearchParams();
+    if (category && category !== 'all') params.set('category', category.toLowerCase());
+    if (refresh) params.set('refresh', 'true');
+    const qs = params.toString();
+    const res = await fetch(`${API_BASE}/research/trends${qs ? `?${qs}` : ''}`);
+    if (!res.ok) throw new Error('Failed to fetch trend radar');
+    return res.json();
+  },
+  queryTrend: async (query: string, category: string = 'fashion', refresh: boolean = false): Promise<TrendDossier> => {
+    const res = await fetch(`${API_BASE}/research/query`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query, category, refresh }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(err.detail || 'Failed to analyze trend query');
+    }
+    const data = await res.json();
+    return data.dossier;
+  },
+  launchTrendCampaign: async (params: {
+    asin: string;
+    title: string;
+    price: number;
+    category?: string;
+    image_url?: string;
+    trend_label?: string;
+    scene_setting?: string;
+    board_name?: string;
+    affiliate_url?: string;
+    keyword_pack?: object;
+  }): Promise<{ status: string; job_id: string; product_id: string; board_name?: string; message: string }> => {
+    const res = await fetch(`${API_BASE}/research/launch-campaign`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(err.detail || 'Failed to launch trend campaign');
+    }
+    return res.json();
+  },
+  getOfficialPinterestTrends: async (
+    preset: string = 'breakout',
+    intent: string = 'all',
+    refresh: boolean = false
+  ): Promise<PinterestOfficialTrendsResponse> => {
+    const params = new URLSearchParams();
+    if (preset) params.set('preset', preset);
+    if (intent && intent !== 'all') params.set('intent', intent);
+    if (refresh) params.set('refresh', 'true');
+    const qs = params.toString();
+    const res = await fetch(`${API_BASE}/research/pinterest-official-trends${qs ? `?${qs}` : ''}`);
+    if (!res.ok) throw new Error('Failed to fetch official Pinterest trends');
+    return res.json();
+  },
+  queryOfficialPinterestTrend: async (query: string, refresh: boolean = false): Promise<PinterestOfficialTrendItem> => {
+    const res = await fetch(`${API_BASE}/research/pinterest-official-trends/query`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query, refresh }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(err.detail || 'Failed to analyze Pinterest trend');
+    }
+    const data = await res.json();
+    return data.trend;
+  },
+  launchInspoCampaign: async (params: {
+    term: string;
+    category?: string;
+    board_name?: string;
+    destination_url?: string;
+    preview_image_url?: string;
+    visual_prompt_notes?: string;
+  }): Promise<{ status: string; job_id: string; product_id: string; board_name?: string; message: string }> => {
+    const res = await fetch(`${API_BASE}/research/launch-inspo-campaign`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(err.detail || 'Failed to launch inspo campaign');
+    }
+    return res.json();
+  },
+  getOfficialPinterestTrendDetail: async (
+    term: string,
+    country: string = 'US',
+    refresh: boolean = false
+  ): Promise<TrendDeepDiveResponse> => {
+    const params = new URLSearchParams({ term, country });
+    if (refresh) params.set('refresh', 'true');
+    const res = await fetch(`${API_BASE}/research/pinterest-official-trends/detail?${params.toString()}`);
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(err.detail || 'Failed to fetch trend deep dive');
+    }
+    const data = await res.json();
+    return data.data;
+  },
+  importPinReference: async (params: {
+    image_url: string;
+    pin_title: string;
+    trend_label: string;
+    category?: string;
+    source_pin_url?: string;
+  }): Promise<{
+    status: string;
+    reference_id: string;
+    trend_label: string;
+    category: string;
+    image_path: string;
+    vault_synced: boolean;
+    has_visual_dna: boolean;
+    message: string;
+  }> => {
+    const res = await fetch(`${API_BASE}/research/import-pin-reference`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ detail: res.statusText }));
+      throw new Error(err.detail || 'Failed to import pin reference');
+    }
+    return res.json();
+  },
 };
+
+
+export interface TrendProduct {
+  asin: string;
+  title: string;
+  price: number;
+  rating?: number;
+  review_count?: number;
+  image_url: string;
+  affiliate_url: string;
+  smart_url?: string;
+  commission_rate?: string;
+  prime_eligible?: boolean;
+  demo_only?: boolean;
+}
+
+export interface TrendDossier {
+  id: string;
+  title: string;
+  category: string;
+  heat_level: 'breakout' | 'rising' | 'evergreen' | string;
+  heat_badge: string;
+  opportunity_score: number;
+  tier: string;
+  aesthetic_vibe: string;
+  outfit_or_scene: string;
+  recommended_board: string;
+  related_queries: string[];
+  matched_products: TrendProduct[];
+  discovered_at?: string;
+  score_breakdown?: { demand: number; money: number; winnability: number; weights_version: number; weights_fingerprint?: string };
+  sources?: { source: string; status: string }[];
+  keyword_pack?: { primary: string; long_tails: string[]; hooks: { variation_index: number; framework: string }[]; board_angle: string; negative_terms: string[]; pack_version: number };
+}
+
+export interface PinterestOfficialTrendItem {
+  term: string;
+  category: string;
+  intent: 'viral_blog' | 'commercial_product' | string;
+  mom_change: number;
+  wow_change: number;
+  yoy_change?: number | null;
+  search_count: number;
+  sparkline: number[];
+  indexing_window: {
+    advice: string;
+    urgency: 'immediate' | 'high' | 'medium' | 'normal' | string;
+    badge: string;
+    phase: string;
+  };
+  recommended_board: string;
+  monetization_angle: string;
+  preview_images: string[];
+}
+
+export interface PinterestOfficialTrendsResponse {
+  success: boolean;
+  source: string;
+  preset: string;
+  intent: string;
+  country: string;
+  count: number;
+  trends: PinterestOfficialTrendItem[];
+}
+
+export interface PopularPinItem {
+  pin_id: string;
+  title: string;
+  visual_hook?: string;
+  overlay_text?: string;
+  image_url: string;
+  pin_url: string;
+  source?: string;
+}
+
+export interface TrendDeepDiveResponse {
+  term: string;
+  category: string;
+  description: string;
+  mom_change: number;
+  wow_change: number;
+  yoy_change?: number | null;
+  search_count: number;
+  sparkline: number[];
+  timeline_dates: string[];
+  commonly_searched_for: string[];
+  popular_pins: PopularPinItem[];
+  indexing_window: {
+    advice: string;
+    urgency: 'immediate' | 'high' | 'medium' | 'normal' | string;
+    badge: string;
+    phase: string;
+  };
+  recommended_board: string;
+  monetization_angle: string;
+}
 
 export interface AmazonItem {
   asin: string;

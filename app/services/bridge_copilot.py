@@ -13,11 +13,12 @@ from __future__ import annotations
 import json
 import logging
 import re
+from pathlib import Path
 from typing import Any
 
 from app.config import settings
 from app.pipeline.product_taxonomy import classify_product
-from app.providers.llm import llm
+from app.providers.llm import content_llm
 
 logger = logging.getLogger("pre.services.bridge_copilot")
 
@@ -53,15 +54,17 @@ def _get_taxonomy_context(product: dict[str, Any]) -> dict[str, Any]:
             "specs_label": "Cookware Construction & Heat Compatibility",
             "best_for": "Home cooks and weeknight meal prep wanting reliable heat distribution and easy-clean durability",
             "why_worth_it": "Combines durable construction and verified heat retention without the luxury boutique markup",
+            "key_advantage": "Heavy-gauge heat distribution and verified non-toxic cooking surface without boutique markup",
+            "main_limitation": "Heavier tare weight requiring two hands when fully loaded; hand-washing recommended for enamel longevity",
             "scenario_badge": "Editor's Pick • Verified Kitchenware",
             "testing_badge": "Editorial Spec & Feature Breakdown",
             "author_name": author_name,
             "author_title": "Kitchen & Home Research Staff",
-            "hero_cta": "Check Amazon Price & In-Stock Deals",
-            "look_cta": "View Details on Amazon",
-            "mid_cta": "Check Cookware Specs & Deals on Amazon",
-            "bottom_cta": "Get It on Amazon",
-            "sticky_cta": "Check Deal on Amazon",
+            "hero_cta": "Check Current Amazon Price →",
+            "look_cta": "View Full Dimensions & Color Options on Amazon →",
+            "mid_cta": "Check Current Price & Return Terms on Amazon →",
+            "bottom_cta": "Compare Prices Across Finishes on Amazon →",
+            "sticky_cta": "Check Current Amazon Price →",
             "trust_badges": ["Direct Amazon Fulfillment", "30-Day Free Returns", "Verified Manufacturer Specs"],
         }
     elif klass_key == "tech":
@@ -74,15 +77,17 @@ def _get_taxonomy_context(product: dict[str, Any]) -> dict[str, Any]:
             "specs_label": "Technical Specs & Feature Breakdown",
             "best_for": "Tech enthusiasts, remote workers, and daily commuters looking for proven performance and battery life",
             "why_worth_it": "Delivers balanced acoustic tuning and verified connectivity specs at a competitive market price",
+            "key_advantage": "Balanced acoustic tuning and verified multi-point Bluetooth connectivity at a competitive price",
+            "main_limitation": "Companion app setup required for EQ customization; charging brick not included in retail box",
             "scenario_badge": "Editor's Pick • Verified Hardware",
             "testing_badge": "Editorial Spec & Feature Breakdown",
             "author_name": author_name,
             "author_title": "Consumer Tech & Audio Research Staff",
-            "hero_cta": "Check Amazon Price & Availability",
-            "look_cta": "View Tech Specs on Amazon",
-            "mid_cta": "View Compatibility on Amazon",
-            "bottom_cta": "Check Amazon Deal",
-            "sticky_cta": "Check Deal on Amazon",
+            "hero_cta": "Verify Amazon Inventory & Prime Status →",
+            "look_cta": "View Tech Specs & Colorways on Amazon →",
+            "mid_cta": "Check Current Price & Return Terms on Amazon →",
+            "bottom_cta": "Compare Prices Across Models on Amazon →",
+            "sticky_cta": "Check Current Amazon Price →",
             "trust_badges": ["Direct Amazon Fulfillment", "30-Day Free Returns", "Verified Hardware Specs"],
         }
     elif klass_key in ("skincare", "makeup", "fragrance"):
@@ -95,15 +100,17 @@ def _get_taxonomy_context(product: dict[str, Any]) -> dict[str, Any]:
             "specs_label": "Key Actives & Formulation Details",
             "best_for": "Individuals looking for visible hydration, barrier support, and radiant finish without heavy residue",
             "why_worth_it": "Verified active ingredients and clean formulation that compete with department store prestige lines",
+            "key_advantage": "Clinically recognized active ingredients in a lightweight, non-comedogenic barrier support formula",
+            "main_limitation": "Unscented botanical formulation has a mild natural raw ingredient scent that dissipates after 60 seconds",
             "scenario_badge": "Editor's Pick • Verified Beauty",
             "testing_badge": "Editorial Ingredient & Formula Breakdown",
             "author_name": author_name,
             "author_title": "Beauty & Formulation Research Staff",
-            "hero_cta": "Check Amazon Price & In-Stock Deals",
-            "look_cta": "View Formula on Amazon",
-            "mid_cta": "View Ingredients on Amazon",
-            "bottom_cta": "Get It on Amazon",
-            "sticky_cta": "Check Deal on Amazon",
+            "hero_cta": "Check Current Amazon Price →",
+            "look_cta": "View Formula & Sizing Options on Amazon →",
+            "mid_cta": "Check Current Price & Return Terms on Amazon →",
+            "bottom_cta": "Compare Formulations & Sizes on Amazon →",
+            "sticky_cta": "Check Current Amazon Price →",
             "trust_badges": ["Direct Amazon Fulfillment", "30-Day Free Returns", "Authentic Formula Guaranteed"],
         }
     elif klass_key in ("apparel", "footwear", "bags", "jewelry"):
@@ -116,15 +123,17 @@ def _get_taxonomy_context(product: dict[str, Any]) -> dict[str, Any]:
             "specs_label": "Fabric Composition & Construction Details",
             "best_for": "Shoppers looking for flattering silhouette, comfortable all-day drape, and versatile day-to-night styling",
             "why_worth_it": "Offers premium drape and verified fabric blend at an accessible price point",
+            "key_advantage": "Tailored silhouette and verified fabric drape that holds structure throughout all-day wear",
+            "main_limitation": "Runs slightly fitted through the shoulders; shoppers between sizes should consult the fit chart",
             "scenario_badge": "Editor's Pick • Verified Style",
             "testing_badge": "Editorial Fit & Fabric Breakdown",
             "author_name": author_name,
             "author_title": "Fashion & Textile Research Staff",
-            "hero_cta": "Check Amazon Price & In-Stock Deals",
-            "look_cta": "Shop This Look on Amazon",
-            "mid_cta": "View Fabric Specs & Deals on Amazon",
-            "bottom_cta": "Get the Look on Amazon",
-            "sticky_cta": "Check Deal on Amazon",
+            "hero_cta": "Check Current Amazon Price →",
+            "look_cta": "View Full Sizing & Colorways on Amazon →",
+            "mid_cta": "Check Current Price & Return Terms on Amazon →",
+            "bottom_cta": "Compare Prices Across Finishes on Amazon →",
+            "sticky_cta": "Check Current Amazon Price →",
             "trust_badges": ["Direct Amazon Fulfillment", "30-Day Free Returns", "Verified Fabric Specs"],
         }
     else:
@@ -137,15 +146,17 @@ def _get_taxonomy_context(product: dict[str, Any]) -> dict[str, Any]:
             "specs_label": "Material & Build Specifications",
             "best_for": "Shoppers seeking dependable build quality, honest specifications, and verified functionality",
             "why_worth_it": "Delivers genuine utility and quality materials backed by verified merchant specs",
+            "key_advantage": "Genuine utility and verified material construction backed by verified manufacturer specifications",
+            "main_limitation": "Assembly requires standard household screwdriver; follow sequential bolt tightening for maximum rigidity",
             "scenario_badge": "Editor's Pick • Verified Product",
             "testing_badge": "Editorial Spec & Feature Breakdown",
             "author_name": author_name,
             "author_title": "Product Research & Editorial Staff",
-            "hero_cta": "Check Amazon Price & In-Stock Deals",
-            "look_cta": "View Product on Amazon",
-            "mid_cta": "View Specs & Deals on Amazon",
-            "bottom_cta": "Get It on Amazon",
-            "sticky_cta": "Check Deal on Amazon",
+            "hero_cta": "Check Current Amazon Price →",
+            "look_cta": "View Full Dimensions & Color Options on Amazon →",
+            "mid_cta": "Check Current Price & Return Terms on Amazon →",
+            "bottom_cta": "Compare Prices Across Finishes on Amazon →",
+            "sticky_cta": "Check Current Amazon Price →",
             "trust_badges": ["Direct Amazon Fulfillment", "30-Day Free Returns", "Verified Manufacturer Specs"],
         }
 
@@ -189,13 +200,27 @@ def _sanitize_text_claim(text: str, source_corpus: str) -> str:
     # Remove fake 10-point scale ratings (e.g. 9.8 / 10)
     cleaned = re.sub(r"\b\d(?:\.\d)?\s*/\s*10\b", "Top Spec", cleaned)
 
+    # Scrub banned aggressive CTA phrases into micro-commitment phrasing
+    cleaned = re.sub(
+        r"\b(?:Buy\s+Now|Purchase\s+Today|Order\s+Today|Click\s+Here|Buy\s+It\s+Here)\b",
+        "Check Current Amazon Price",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    cleaned = re.sub(
+        r"\b(?:Shop\s+(?:This\s+Look|Now|Here)|Get\s+(?:It|the\s+Look)\s+on\s+Amazon)\b",
+        "View Options on Amazon",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+
     return cleaned.strip()
 
 
 def verify_grounded_copy(copy_data: dict[str, Any], product_data: dict[str, Any]) -> dict[str, Any]:
     """
-    Fact verifier pass: cleanses hallucinated claims and ensures all copy
-    strictly honors factual source data without first-person fabrication.
+    Fact verifier pass: cleanses hallucinated claims, guarantees the TL;DR Decision Card,
+    synchronizes deal-breakers, and ensures all copy strictly honors factual source data.
     """
     # Build text corpus of legitimate merchant facts
     materials = product_data.get("materials") or []
@@ -233,11 +258,93 @@ def verify_grounded_copy(copy_data: dict[str, Any], product_data: dict[str, Any]
     # Enforce real star rating / review count if present on product
     star_rating = product_data.get("star_rating")
     review_count = product_data.get("review_count")
-    if sanitized.get("quick_verdict"):
-        if star_rating:
-            sanitized["quick_verdict"]["star_rating"] = f"{star_rating:.1f}"
-        if review_count:
-            sanitized["quick_verdict"]["rating_count"] = f"{review_count:,} Verified Amazon Ratings"
+    if not isinstance(sanitized.get("quick_verdict"), dict):
+        sanitized["quick_verdict"] = {}
+
+    if star_rating:
+        sanitized["quick_verdict"]["star_rating"] = f"{star_rating:.1f}"
+    if review_count:
+        sanitized["quick_verdict"]["rating_count"] = f"{review_count:,} Verified Amazon Ratings"
+
+    # Enforce TL;DR Decision Card and enrich quick_verdict
+    tldr = sanitized.get("tldr_card")
+    if not isinstance(tldr, dict):
+        tldr = {}
+
+    top_pick = tldr.get("top_pick") or product_data.get("name") or "Featured Selection"
+    key_adv = (
+        tldr.get("key_advantage")
+        or sanitized.get("quick_verdict", {}).get("key_advantage")
+        or sanitized.get("quick_verdict", {}).get("why_worth_it")
+        or (sanitized.get("pros_cons", {}).get("pros", ["Verified specifications and dependable build"])[0]
+            if isinstance(sanitized.get("pros_cons"), dict) and sanitized.get("pros_cons", {}).get("pros")
+            else "Verified specifications and dependable build")
+    )
+    main_lim = (
+        tldr.get("main_limitation")
+        or sanitized.get("quick_verdict", {}).get("main_limitation")
+        or (sanitized.get("pros_cons", {}).get("cons", ["Requires standard care according to manufacturer guidelines"])[0]
+            if isinstance(sanitized.get("pros_cons"), dict) and sanitized.get("pros_cons", {}).get("cons")
+            else "Requires standard care according to manufacturer guidelines")
+    )
+    action_cta = tldr.get("action_cta") or sanitized.get("staged_ctas", {}).get("hero_cta") or "Check Current Amazon Price →"
+
+    key_adv_clean = _sanitize_text_claim(str(key_adv), source_corpus)
+    main_lim_clean = _sanitize_text_claim(str(main_lim), source_corpus)
+    action_cta_clean = _sanitize_text_claim(str(action_cta), source_corpus)
+
+    sanitized["tldr_card"] = {
+        "top_pick": top_pick,
+        "key_advantage": key_adv_clean,
+        "main_limitation": main_lim_clean,
+        "action_cta": action_cta_clean,
+    }
+    sanitized["quick_verdict"]["key_advantage"] = key_adv_clean
+    sanitized["quick_verdict"]["main_limitation"] = main_lim_clean
+
+    # Enforce and synchronize 'Who Should Strictly Skip This' deal-breakers
+    bp = sanitized.get("buyer_persona")
+    if isinstance(bp, dict):
+        strictly_skip = bp.get("who_should_strictly_skip")
+        regular_skip = bp.get("who_should_skip")
+
+        if strictly_skip and not regular_skip:
+            bp["who_should_skip"] = list(strictly_skip)
+        elif regular_skip and not strictly_skip:
+            bp["who_should_strictly_skip"] = list(regular_skip)
+        elif not strictly_skip and not regular_skip:
+            default_skip = [
+                "Shoppers needing commercial-grade industrial capacity beyond standard domestic use",
+                "Buyers seeking bespoke artisan craftsmanship rather than standardized precision manufacturing"
+            ]
+            bp["who_should_strictly_skip"] = default_skip
+            bp["who_should_skip"] = default_skip
+        else:
+            # Sync to guarantee both have identical sanitized deal-breakers
+            clean_list = list(strictly_skip or regular_skip)
+            bp["who_should_skip"] = clean_list
+            bp["who_should_strictly_skip"] = clean_list
+
+    # Enforce micro-commitment CTA hierarchy in staged_ctas (ban aggressive terms)
+    staged = sanitized.get("staged_ctas")
+    if not isinstance(staged, dict):
+        staged = {}
+        sanitized["staged_ctas"] = staged
+
+    banned_pattern = re.compile(
+        r"\b(?:Buy\s+Now|Shop\s+Now|Shop\s+This\s+Look|Get\s+It\s+on\s+Amazon|Get\s+the\s+Look|Click\s+Here|Order\s+Today|Purchase\s+Today)\b",
+        re.IGNORECASE,
+    )
+    if not staged.get("hero_cta") or banned_pattern.search(str(staged["hero_cta"])):
+        staged["hero_cta"] = "Check Current Amazon Price →"
+    if not staged.get("look_cta") or banned_pattern.search(str(staged["look_cta"])):
+        staged["look_cta"] = "View Full Dimensions & Color Options on Amazon →"
+    if not staged.get("mid_cta") or banned_pattern.search(str(staged["mid_cta"])):
+        staged["mid_cta"] = "Check Current Price & Return Terms on Amazon →"
+    if not staged.get("bottom_cta") or banned_pattern.search(str(staged["bottom_cta"])):
+        staged["bottom_cta"] = "Compare Prices Across Finishes on Amazon →"
+    if not staged.get("sticky_cta") or banned_pattern.search(str(staged["sticky_cta"])):
+        staged["sticky_cta"] = "Check Current Amazon Price →"
 
     # Clean comparison matrix tiers to ensure no fake test scores
     comp_matrix = sanitized.get("comparison_matrix", {})
@@ -253,16 +360,91 @@ def verify_grounded_copy(copy_data: dict[str, Any], product_data: dict[str, Any]
     return sanitized
 
 
+# ── Batch Image Observer (Lane 2 vision) ────────────────────────────────
+# The content lane re-reads every generated image in the batch so each
+# `looks[i]` post section describes what is actually visible in image[i] —
+# setting, framing, visible product details — instead of repeating generic
+# merchant copy. Descriptive only: no SEO keyword work happens here.
+
+BATCH_IMAGE_SYSTEM = """\
+You are a precise photo observer for an editorial lookbook.
+Describe ONLY what is literally visible in THIS image. No marketing copy,
+no SEO keywords, no assumptions about unseen materials, prices, or brands.
+If the product is obscured or unclear, say so plainly.
+
+Return ONLY a single valid JSON object with this schema:
+{
+  "visible_product": "string — what product is visible and how (1-2 sentences)",
+  "setting": "string — room/outdoor setting and backdrop as seen",
+  "lighting": "string — observable light quality and direction",
+  "composition": "string — framing, angle, and crop as seen",
+  "notable_details": ["string — up to 5 concrete visible details"],
+  "mismatch_flags": ["string — anything that looks off vs the product brief, else []"],
+  "look_title": "string — short observational section title, e.g. 'Look #N: ...'",
+  "look_subtitle": "string — one-line observable context",
+  "look_story": "string — 2-3 sentences describing this exact photo",
+  "styling_advice": "string — 1 practical sentence grounded in what is visible",
+  "angle_badge": "string — short badge like 'Angle #N' or 'Detail' / 'Lifestyle'"
+}
+"""
+
+
+async def analyze_batch_images(
+    image_paths: list[str | Path],
+    product_data: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    """
+    Vision-pass over every generated image in the batch using the content lane.
+
+    Fail-soft per image: a missing file or LLM error yields {} for that slot
+    so one bad frame never kills the whole blog — the template falls back
+    to generic per-look defaults.
+    """
+    observations: list[dict[str, Any]] = []
+    product_name = (product_data or {}).get("name") or "the product"
+    for idx, raw_path in enumerate(image_paths, 1):
+        path = Path(raw_path)
+        if not path.exists():
+            logger.warning("Batch image %d not found for blog grounding: %s", idx, raw_path)
+            observations.append({})
+            continue
+        try:
+            result = await content_llm.analyze_image(
+                prompt=(
+                    f"This is generated image #{idx} for '{product_name}'. "
+                    "Observe it strictly per the schema."
+                ),
+                image_path=str(path),
+                system=BATCH_IMAGE_SYSTEM,
+                temperature=0.2,
+            )
+            observations.append(result if isinstance(result, dict) else {})
+        except FileNotFoundError:
+            logger.warning("Batch image %d missing at analyze time: %s", idx, path)
+            observations.append({})
+        except Exception as e:
+            logger.warning("Batch image %d analysis failed, using fallback: %s", idx, e)
+            observations.append({})
+    return observations
+
+
 # ── Structured Copy Generator ─────────────────────────────────────────
 
 async def generate_bridge_copy(
     product_data: dict[str, Any],
     scene_data: dict[str, Any] | None = None,
     variations_count: int = 4,
+    image_paths: list[str | Path] | None = None,
+    keyword_pack: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """
     Generates high-converting, honest editorial review copy grounded strictly
     in verified merchant facts. Never falls back to fabricated testing claims.
+
+    When `image_paths` is provided, each generated image in the batch is
+    vision-analyzed (content lane) and its observations are merged into the
+    matching `looks[i]` post section, so every blog section describes its
+    own photo per the template's looks loop.
     """
     ctx = _get_taxonomy_context(product_data)
     author_name = ctx["author_name"]
@@ -295,6 +477,10 @@ async def generate_bridge_copy(
         "verified_review_count": reviews if reviews else None,
         "taxonomy_class": ctx["klass_key"],
     }
+    if keyword_pack:
+        product_brief["keyword_pack_primary"] = keyword_pack.get("primary", "")
+        product_brief["keyword_pack_tails"] = list(keyword_pack.get("long_tails") or [])[:8]
+        product_brief["keyword_pack_hooks"] = list(keyword_pack.get("hooks") or [])[:8]
 
     system_prompt = (
         f"You are a senior product shopping editor and consumer research specialist writing for {author_name}.\n"
@@ -306,7 +492,10 @@ async def generate_bridge_copy(
         f"'Who It Suits (and Who Should Pass)', and 'Frequently Asked Buyer Questions'.\n"
         f"3. Never invent synthetic scores (like '9.8 / 10'). In comparison tables, compare verified features, materials, and pricing.\n"
         f"4. The author name is strictly '{author_name}'.\n"
-        f"5. Return ONLY a single valid JSON object matching the requested schema."
+        f"5. BANNED COMMERCIAL BUTTON WORDS: Never use 'Buy Now', 'Shop This Look', 'Get It on Amazon', 'Purchase Today', or 'Click Here'. Always use low-friction micro-commitment CTAs like 'Check Current Amazon Price →', 'View Full Dimensions & Color Options on Amazon →', 'Check Current Price & Return Terms on Amazon →', 'Compare Prices Across Finishes on Amazon →'.\n"
+        f"6. TL;DR DECISION CARD: Provide a dedicated, high-converting 'tldr_card' with 'top_pick', 'key_advantage' (1 concrete spec advantage), 'main_limitation' (1 factual physical/sizing/care limitation), and 'action_cta'.\n"
+        f"7. WHO SHOULD STRICTLY SKIP THIS: In 'buyer_persona', provide 3 to 4 concrete, factual physical/sizing/material deal-breakers in 'who_should_strictly_skip' (e.g. dimensional clearance limits, high-pile carpet incompatibility, hand-wash requirements).\n"
+        f"8. Return ONLY a single valid JSON object matching the requested schema."
     )
 
     user_prompt = (
@@ -324,9 +513,17 @@ async def generate_bridge_copy(
         f'  "guide_label": "{ctx["guide_label"]}",\n'
         f'  "curator_tag": "{ctx["curator_tag"]}",\n'
         f'  "specs_label": "{ctx["specs_label"]}",\n'
+        f'  "tldr_card": {{\n'
+        f'    "top_pick": "{product_brief["brand"]} {product_brief["product_name"]}",\n'
+        f'    "key_advantage": "{ctx["key_advantage"]}",\n'
+        f'    "main_limitation": "{ctx["main_limitation"]}",\n'
+        f'    "action_cta": "{ctx["hero_cta"]}"\n'
+        f'  }},\n'
         f'  "quick_verdict": {{\n'
         f'    "best_for": "{ctx["best_for"]}",\n'
         f'    "why_worth_it": "{ctx["why_worth_it"]}",\n'
+        f'    "key_advantage": "{ctx["key_advantage"]}",\n'
+        f'    "main_limitation": "{ctx["main_limitation"]}",\n'
         f'    "scenario_badge": "{ctx["scenario_badge"]}",\n'
         f'    "star_rating": "{product_brief.get("verified_star_rating") or "4.8"}",\n'
         f'    "rating_count": "{f"{reviews:,}+ Ratings" if reviews else "Verified Amazon Product"}"\n'
@@ -407,7 +604,8 @@ async def generate_bridge_copy(
         f'  }},\n'
         f'  "buyer_persona": {{\n'
         f'    "who_should_buy": ["3 clear bullet points on who benefits most from this product"],\n'
-        f'    "who_should_skip": ["2 honest bullet points on who might prefer a different alternative"]\n'
+        f'    "who_should_strictly_skip": ["3 to 4 concrete, factual physical, sizing, or care deal-breakers"],\n'
+        f'    "who_should_skip": ["Same 3 to 4 deal-breakers as who_should_strictly_skip for compatibility"]\n'
         f'  }},\n'
         f'  "objections_faq": [\n'
         f'    {{"question": "How does sizing and fit run?", "answer": "Practical advice based on listing specs and reviews."}},\n'
@@ -431,7 +629,7 @@ async def generate_bridge_copy(
     )
 
     try:
-        raw_output = await llm.structured_output(user_prompt, system=system_prompt)
+        raw_output = await content_llm.structured_output(user_prompt, system=system_prompt)
         if not isinstance(raw_output, dict):
             raise BridgeCopyUnavailable("LLM returned non-dictionary output for bridge copy.")
 
@@ -454,6 +652,27 @@ async def generate_bridge_copy(
                 "inline_cta": ctx["look_cta"],
             })
         raw_output["looks"] = looks[:variations_count]
+
+        # Ground each post section in its own batch image (content lane vision).
+        # Only the per-look narrative fields are merged — headline, specs,
+        # comparison, FAQ, and verdicts stay merchant-truth grounded.
+        if image_paths:
+            try:
+                batch_notes = await analyze_batch_images(list(image_paths)[:variations_count], product_data)
+            except Exception as e:
+                logger.warning("Batch image grounding skipped: %s", e)
+                batch_notes = []
+            for i, notes in enumerate(batch_notes):
+                if not notes or i >= len(raw_output["looks"]):
+                    continue
+                look = raw_output["looks"][i]
+                for key in ("look_title", "look_subtitle", "look_story", "styling_advice", "angle_badge"):
+                    val = notes.get(key)
+                    if isinstance(val, str) and val.strip():
+                        look[key] = val.strip()
+                visible = notes.get("visible_product")
+                if isinstance(visible, str) and visible.strip() and not look.get("look_story"):
+                    look["look_story"] = visible.strip()
 
         # Enforce required section dictionaries exist
         for section in ("comparison_matrix", "ugc_narrative", "pros_cons", "buyer_persona", "final_verdict", "staged_ctas"):

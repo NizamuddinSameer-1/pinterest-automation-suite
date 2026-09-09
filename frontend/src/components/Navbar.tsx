@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Sparkles, Layers, Package, Pin, BookOpen, Activity, Terminal } from 'lucide-react';
+import { Sparkles, Layers, Package, Pin, BookOpen, Activity, Terminal, TrendingUp } from 'lucide-react';
 import { DiagnosticsModal } from './DiagnosticsModal';
 
 interface NavbarProps {
@@ -70,6 +70,15 @@ export const Navbar: React.FC<NavbarProps> = ({
           >
             <Layers size={16} />
             <span>Dashboard</span>
+          </button>
+
+          <button
+            onClick={() => setActiveTab('research')}
+            className={`btn ${activeTab === 'research' ? 'btn-primary' : 'btn-secondary'}`}
+            style={{ padding: '7px 14px' }}
+          >
+            <TrendingUp size={16} />
+            <span>Trend Radar</span>
           </button>
 
           <button

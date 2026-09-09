@@ -157,6 +157,29 @@
             </div>
           </div>
 
+          <!-- TL;DR Quick-Select Decision Card -->
+          {% set tldr = tldr_card or {} %}
+          <div class="tldr-decision-card">
+            <div class="tldr-badge-row">
+              <span class="tldr-kicker">⚡ TL;DR Quick-Select Decision Card</span>
+              <span class="tldr-subtag">Direct Editorial Answer</span>
+            </div>
+            <div class="tldr-grid">
+              <div class="tldr-point">
+                <span class="tldr-label">Top Pick:</span>
+                <span class="tldr-value"><strong>{{ tldr.top_pick or product_name }}</strong></span>
+              </div>
+              <div class="tldr-point">
+                <span class="tldr-label">Key Advantage:</span>
+                <span class="tldr-value">{{ tldr.key_advantage or quick_verdict.key_advantage or quick_verdict.why_worth_it }}</span>
+              </div>
+              <div class="tldr-point tldr-limitation">
+                <span class="tldr-label">Main Limitation:</span>
+                <span class="tldr-value">{{ tldr.main_limitation or quick_verdict.main_limitation or (pros_cons.cons[0] if pros_cons and pros_cons.cons else 'Requires standard care according to care instructions') }}</span>
+              </div>
+            </div>
+          </div>
+
           <div class="price-row">
             <div>
               <div style="font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.03em; color: var(--ink-muted); margin-bottom: 2px;">Verified Amazon Price</div>
@@ -173,7 +196,7 @@
 
           <!-- Primary CTA Button (Above the Fold) -->
           <a href="{{ affiliate_url }}" target="_blank" rel="nofollow sponsored noopener" class="btn-cta-primary">
-            <span>{{ staged_ctas.hero_cta if staged_ctas else 'Check Amazon Price & In-Stock Deals' }}</span>
+            <span>{{ staged_ctas.hero_cta if staged_ctas else 'Check Current Amazon Price →' }}</span>
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
           </a>
 
@@ -207,7 +230,7 @@
                 <span class="comp-price">{{ item.price }}</span>
                 {% if item.is_featured %}
                 <a href="{{ affiliate_url }}" target="_blank" rel="nofollow sponsored noopener" class="comp-btn">
-                  Check Amazon →
+                  Check Current Amazon Price →
                 </a>
                 {% else %}
                 <span style="font-size: 11.5px; color: var(--ink-muted);">Comparison</span>
@@ -290,7 +313,7 @@
 
             <!-- Contextual Inline CTA -->
             <a href="{{ affiliate_url }}" target="_blank" rel="nofollow sponsored noopener" class="btn-look-cta">
-              <span>{{ look.inline_cta or 'View on Amazon' }}</span>
+              <span>{{ look.inline_cta or 'View Full Dimensions & Color Options on Amazon →' }}</span>
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
             </a>
           </div>
@@ -361,9 +384,9 @@
             </div>
 
             <div class="persona-card skip-card">
-              <h3>⚠️ Consider Alternatives If:</h3>
+              <h3>⚠️ Who Should Strictly Skip This:</h3>
               <ul class="persona-list">
-                {% for item in buyer_persona.who_should_skip %}
+                {% for item in (buyer_persona.who_should_strictly_skip or buyer_persona.who_should_skip) %}
                 <li>{{ item }}</li>
                 {% endfor %}
               </ul>
@@ -409,7 +432,7 @@
             <p>{{ final_verdict.summary if final_verdict else "An exceptional product that balances verified material build quality with dependable day-to-day utility." }}</p>
             
             <a href="{{ affiliate_url }}" target="_blank" rel="nofollow sponsored noopener" class="final-cta-btn">
-              <span>{{ staged_ctas.bottom_cta if staged_ctas else 'Check Price on Amazon' }}</span>
+              <span>{{ staged_ctas.bottom_cta if staged_ctas else 'Compare Prices Across Finishes on Amazon →' }}</span>
               <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
             </a>
           </div>
@@ -439,7 +462,7 @@
           <div style="color:var(--ink-muted); font-size:12.5px; margin-bottom:12px;">{{ brand }}</div>
           <div style="font-family:var(--font-display); font-size:24px; font-weight:700; margin-bottom:14px;">{{ price_display }}</div>
           <a href="{{ affiliate_url }}" target="_blank" rel="nofollow sponsored noopener" class="sidebar-btn">
-            View on Amazon →
+            Check Current Amazon Price →
           </a>
         </div>
 
@@ -482,7 +505,7 @@
         <div class="mobile-sticky-price">{{ price_display }}</div>
       </div>
       <a href="{{ affiliate_url }}" target="_blank" rel="nofollow sponsored noopener" class="mobile-sticky-btn">
-        {{ staged_ctas.sticky_cta if staged_ctas else 'Check Deal' }} →
+        {{ staged_ctas.sticky_cta if staged_ctas else 'Check Current Amazon Price →' }}
       </a>
     </div>
   </div>

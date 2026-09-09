@@ -167,7 +167,8 @@ def get_boards_catalog_path(profile_id: str | None = None) -> Path:
     """Return the boards catalogue JSON file path for a profile."""
     pid = (profile_id or DEFAULT_PROFILE_ID).strip()
     if pid == DEFAULT_PROFILE_ID:
-        return Path("./data/pinterest_boards.json").resolve()
+        from app.services import board_catalog
+        return board_catalog.CATALOG_PATH
     return Path(f"./data/pinterest_boards_{pid}.json").resolve()
 
 
@@ -175,7 +176,8 @@ def get_boards_refresh_path(profile_id: str | None = None) -> Path:
     """Return the boards refresh status JSON file path for a profile."""
     pid = (profile_id or DEFAULT_PROFILE_ID).strip()
     if pid == DEFAULT_PROFILE_ID:
-        return Path("./data/pinterest_boards_refresh.json").resolve()
+        from app.services import board_catalog
+        return board_catalog.REFRESH_STATUS_PATH
     return Path(f"./data/pinterest_boards_refresh_{pid}.json").resolve()
 
 

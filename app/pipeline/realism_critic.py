@@ -83,8 +83,17 @@ PRIORITIZE:
   - Product fidelity
   - Originality
 
+CHAIN-OF-THOUGHT INSTRUCTION:
+Begin by populating `_forensic_audit` with a step-by-step physical inspection:
+1. Anatomy & geometry check (hands, limbs, floating objects, warped edges)
+2. Optics & lighting check (bounce, shadows, focal falloff, synthetic sheen)
+3. Product fidelity check (verifying must_preserve against visible attributes)
+4. Originality check (composition comparison with reference)
+Only after completing this forensic inspection do you assign categorical ratings and the final decision.
+
 OUTPUT SCHEMA:
 {
+  "_forensic_audit": "string — step-by-step physical inspection of anatomy, optics, product specs, and originality",
   "authenticity": "AUTHENTIC|PLAUSIBLE|SYNTHETIC|BROKEN",
   "product_fidelity": "FAITHFUL|MINOR_DRIFT|MISREPRESENTED",
   "originality": "ORIGINAL|DERIVATIVE|COPY",
@@ -143,6 +152,7 @@ async def critique_image(
         prompt=user_prompt,
         image_path=generated_image_path,
         system=SYSTEM_PROMPT,
+        temperature=0.1,
     )
 
     # A critique that is missing its judgement axes would sail through

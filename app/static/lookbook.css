@@ -231,6 +231,85 @@ main { min-width: 0; }
   gap: 12px;
   margin-bottom: 16px;
 }
+
+/* ---------- TL;DR Quick-Select Decision Card ---------- */
+.tldr-decision-card {
+  background: #FFFFFF;
+  border: 1px solid rgba(212, 163, 115, 0.45);
+  border-left: 4px solid var(--accent);
+  border-radius: 8px;
+  padding: 16px 18px;
+  margin: 16px 0 20px 0;
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.02);
+}
+.tldr-badge-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px dashed var(--border);
+}
+.tldr-kicker {
+  font-size: 11.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--accent);
+}
+.tldr-subtag {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--ink-muted);
+  background: #F3F1EC;
+  padding: 2px 8px;
+  border-radius: 4px;
+}
+.tldr-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.tldr-point {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--ink);
+}
+.tldr-label {
+  font-weight: 700;
+  color: var(--ink);
+  font-size: 12.5px;
+  min-width: 110px;
+  flex-shrink: 0;
+}
+.tldr-value {
+  color: var(--ink-soft);
+}
+.tldr-limitation {
+  background: #FFFBEB;
+  padding: 8px 12px;
+  border-radius: 6px;
+  border: 1px solid #FEF3C7;
+}
+.tldr-limitation .tldr-label {
+  color: #B45309;
+}
+.tldr-limitation .tldr-value {
+  color: #92400E;
+}
+@media (max-width: 600px) {
+  .tldr-point {
+    flex-direction: column;
+    gap: 2px;
+  }
+  .tldr-label {
+    min-width: unset;
+  }
+}
 .scenario-badge {
   display: inline-flex;
   align-items: center;
@@ -748,8 +827,8 @@ blockquote.editorial-quote cite {
   background: linear-gradient(180deg, rgba(240, 253, 244, 0.7) 0%, #FFFFFF 30%);
 }
 .persona-card.skip-card {
-  border-color: rgba(100, 116, 139, 0.32);
-  background: linear-gradient(180deg, rgba(248, 250, 252, 0.7) 0%, #FFFFFF 30%);
+  border-color: rgba(225, 29, 72, 0.28);
+  background: linear-gradient(180deg, rgba(255, 241, 242, 0.65) 0%, #FFFFFF 35%);
 }
 .persona-card h3,
 .persona-card h4 {
@@ -757,6 +836,9 @@ blockquote.editorial-quote cite {
   font-weight: 700;
   margin: 0 0 12px 0;
   color: var(--ink);
+}
+.skip-card h3 {
+  color: #BE123C;
 }
 .persona-list {
   list-style: none;
@@ -768,11 +850,12 @@ blockquote.editorial-quote cite {
 .persona-list li {
   margin-bottom: 8px;
   line-height: 1.5;
-  padding-left: 18px;
+  padding-left: 20px;
   position: relative;
 }
 .buy-card .persona-list li::before { content: "👍"; position: absolute; left: 0; font-size: 11px; }
-.skip-card .persona-list li::before { content: "ℹ️"; position: absolute; left: 0; font-size: 11px; }
+.skip-card .persona-list li { color: #881337; }
+.skip-card .persona-list li::before { content: "⚠️"; position: absolute; left: 0; font-size: 11px; }
 
 /* ---------- Objection FAQ Accordion ---------- */
 .faq-section {
