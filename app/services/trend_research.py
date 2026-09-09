@@ -384,15 +384,64 @@ DEMO_ASINS: frozenset[str] = _collect_demo_asins()
 
 # ── Live Amazon Product Matcher ───────────────────────────────────────────
 
+def _clean_price(val: Any, default: float = 39.99) -> float:
+    if val is None:
+        return default
+    if isinstance(val, (int, float)):
+        return float(val) if val > 0 else default
+    cleaned = re.sub(r"[^\d.]", "", str(val))
+    if not cleaned:
+        return default
+    try:
+        if cleaned.count(".") > 1:
+            parts = cleaned.split(".")
+            cleaned = "".join(parts[:-1]) + "." + parts[-1]
+        v = float(cleaned)
+        return v if v > 0 else default
+    except ValueError:
+        return default
+
+
+def _clean_rating(val: Any, default: float = 4.5) -> float:
+    if val is None:
+        return default
+    if isinstance(val, (int, float)):
+        return float(val) if 0 < val <= 5.0 else default
+    cleaned = re.sub(r"[^\d.]", "", str(val))
+    if not cleaned:
+        return default
+    try:
+        r = float(cleaned)
+        return r if 0 < r <= 5.0 else default
+    except ValueError:
+        return default
+
+
+def _clean_reviews(val: Any, default: int = 350) -> int:
+    if val is None:
+        return default
+    if isinstance(val, int):
+        return val if val >= 0 else default
+    if isinstance(val, float):
+        return int(val)
+    cleaned = re.sub(r"[^\d]", "", str(val))
+    if not cleaned:
+        return default
+    try:
+        return int(cleaned)
+    except ValueError:
+        return default
+
+
 async def match_amazon_products_for_trend(
     query: str,
-    category: str,
+    category: str = "fashion",
     fallback_items: list[dict[str, Any]] | None = None,
-    item_count: int = 3,
+    item_count: int = 2,
 ) -> list[dict[str, Any]]:
     """
-    Find top-rated, high-intent Amazon products matching this trend.
-    Uses PA-API 5.0 with real pricing, ratings, and affiliate link generation.
+    Search Amazon for top-converting affiliate products matching a trending topic.
+    Uses PA-API 5.0 / Amazon Product Engine with real pricing, ratings, and affiliate link generation.
     Falls back gracefully to curated high-converting products if offline.
     """
     results: list[dict[str, Any]] = []
@@ -417,11 +466,18 @@ async def match_amazon_products_for_trend(
         )
         for item in raw_items:
             asin = item.get("asin")
+            if not asin:
+                continue
             title = item.get("title") or query.title()
-            price = float(item.get("price") or 39.99)
-            image_url = item.get("image_url") or ""
-            rating = float(item.get("rating") or 4.5)
-            review_count = int(item.get("review_count") or 350)
+            # Support both price_amount (float) and price (string or float)
+            price_raw = item.get("price_amount") if item.get("price_amount") is not None else item.get("price")
+            price = _clean_price(price_raw, 39.99)
+            # Support both primary_image_url and image_url
+            image_url = item.get("primary_image_url") or item.get("image_url") or ""
+            # Support both star_rating and rating
+            rating_raw = item.get("star_rating") if item.get("star_rating") is not None else item.get("rating")
+            rating = _clean_rating(rating_raw, 4.5)
+            review_count = _clean_reviews(item.get("review_count"), 350)
 
             # Build smart affiliate link
             smart_url = build_smart_redirect_url(
@@ -434,14 +490,14 @@ async def match_amazon_products_for_trend(
                 "asin": asin,
                 "title": title,
                 "price": price,
-                "currency": "USD",
+                "currency": item.get("currency") or "USD",
                 "rating": rating,
                 "review_count": review_count,
                 "image_url": image_url,
                 "affiliate_url": item.get("affiliate_url") or smart_url,
                 "smart_url": smart_url,
                 "commission_rate": "4.0% – 8.0%",
-                "prime_eligible": True,
+                "prime_eligible": bool(item.get("is_prime", True)),
                 "demo_only": False,
             })
     except Exception as e:
@@ -458,10 +514,10 @@ async def match_amazon_products_for_trend(
             results.append({
                 "asin": asin,
                 "title": title,
-                "price": float(f.get("price", 39.99)),
+                "price": _clean_price(f.get("price"), 39.99),
                 "currency": "USD",
-                "rating": float(f.get("rating", 4.6)),
-                "review_count": int(f.get("review_count", 500)),
+                "rating": _clean_rating(f.get("rating"), 4.6),
+                "review_count": _clean_reviews(f.get("review_count"), 500),
                 "image_url": f.get("image_url", ""),
                 "affiliate_url": smart_url,
                 "smart_url": smart_url,
@@ -470,18 +526,58 @@ async def match_amazon_products_for_trend(
                 "demo_only": True,
             })
 
+    # If still empty (e.g. custom search without seeds when scraper is rate-limited):
+    if not results:
+        smart_url = build_smart_redirect_url(asin=None, title=query)
+        results.append({
+            "asin": "B0SEARCH01",
+            "title": f"Top Rated {query.title()} on Amazon",
+            "price": 34.99,
+            "currency": "USD",
+            "rating": 4.6,
+            "review_count": 520,
+            "image_url": "https://images.unsplash.com/photo-1441986300917-64674bd600d8?w=500&q=80",
+            "affiliate_url": smart_url,
+            "smart_url": smart_url,
+            "commission_rate": "4.0% – 8.0%",
+            "prime_eligible": True,
+            "demo_only": True,
+        })
+
     return results[:item_count]
 
 
 def _write_snapshot(dossiers: list[dict[str, Any]]) -> None:
-    """Persist the daily snapshot; failures only warn (scan stays green)."""
+    """Persist the daily snapshot, merging existing dossiers by id so single-category scans don't wipe others."""
     try:
         snap_dir = Path(settings.storage_path) / "trend_radar"
         snap_dir.mkdir(parents=True, exist_ok=True)
         stamp = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        (snap_dir / f"{stamp}.json").write_text(
-            json.dumps({"scanned_at": datetime.now(timezone.utc).isoformat(),
-                        "count": len(dossiers), "dossiers": dossiers}, indent=2),
+        snap_file = snap_dir / f"{stamp}.json"
+
+        merged_map: dict[str, dict[str, Any]] = {}
+        if snap_file.exists():
+            try:
+                existing_payload = json.loads(snap_file.read_text(encoding="utf-8"))
+                for d in existing_payload.get("dossiers") or []:
+                    if "id" in d:
+                        merged_map[d["id"]] = d
+            except Exception:
+                pass
+
+        for d in dossiers:
+            if "id" in d:
+                merged_map[d["id"]] = d
+
+        all_dossiers = list(merged_map.values())
+        all_dossiers.sort(key=lambda x: x.get("opportunity_score", 0), reverse=True)
+
+        snap_file.write_text(
+            json.dumps({
+                "scanned_at": datetime.now(timezone.utc).isoformat(),
+                "count": len(all_dossiers),
+                "dossiers": all_dossiers,
+            }, indent=2),
             encoding="utf-8",
         )
     except Exception as e:
@@ -621,7 +717,7 @@ def _write_custom_cache(key: str, dossier: dict[str, Any]) -> None:
         logger.warning("Custom trend cache write failed: %s", e)
 
 
-async def analyze_custom_trend_query(query: str, category: str = "fashion") -> dict[str, Any]:
+async def analyze_custom_trend_query(query: str, category: str = "fashion", refresh: bool = False) -> dict[str, Any]:
     """
     Run on-demand deep trend analysis for any user-entered keyword.
 
@@ -637,9 +733,10 @@ async def analyze_custom_trend_query(query: str, category: str = "fashion") -> d
         raise ValueError("Search query cannot be empty")
 
     key = re.sub(r"[^a-z0-9]+", "_", clean_q.lower()).strip("_") + f"__{re.sub(r'[^a-z0-9]+', '_', category.lower()).strip('_')}"
-    cached = _read_custom_cache(key)
-    if cached is not None:
-        return cached
+    if not refresh:
+        cached = _read_custom_cache(key)
+        if cached is not None:
+            return cached
 
     # 1. Live multi-source scan + blended computed score (settings weights).
     signals = await _scan_seed_signals(clean_q, category)

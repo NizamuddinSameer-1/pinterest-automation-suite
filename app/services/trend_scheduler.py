@@ -21,14 +21,26 @@ _running = False
 async def run_scan_once() -> int:
     """Run one full scan; returns dossier count. Never raises."""
     from app.services.trend_research import discover_trends_radar
+    from app.services.pinterest_trends_scraper import get_official_pinterest_trends
 
+    total = 0
     try:
         dossiers = await discover_trends_radar()
-        logger.info("Trend scan complete: %d dossiers", len(dossiers))
-        return len(dossiers)
+        logger.info("Commercial trend scan complete: %d dossiers", len(dossiers))
+        total += len(dossiers)
     except Exception as e:
-        logger.warning("Trend scan failed (next run in interval): %s", e)
-        return 0
+        logger.warning("Commercial trend scan failed: %s", e)
+
+    # Automatically refresh official Pinterest Trends in the background
+    for preset in ["breakout", "growing", "top"]:
+        try:
+            trends = await get_official_pinterest_trends(preset=preset, force_refresh=True)
+            logger.info("Official Pinterest Trends background refresh [%s]: %d items", preset, len(trends))
+            total += len(trends)
+        except Exception as e:
+            logger.warning("Official Pinterest Trends background refresh failed for %s: %s", preset, e)
+
+    return total
 
 
 async def _loop() -> None:
