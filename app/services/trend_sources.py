@@ -65,6 +65,8 @@ async def fetch_shopping(seed_query: str, category: str = "fashion") -> SourceSi
                 queries = [str(q).strip() for q in data[1] if str(q).strip()][:6]
             if not queries:
                 return _empty("shopping")
+            # Breadth proxy, NOT a measured rate: more autocomplete suggestions
+            # ≈ broader live shopping interest. Recorded as such (demand_source).
             return SourceSignal(
                 source="shopping", status="fresh", queries=queries,
                 demand_hint=min(100.0, 40.0 + 10.0 * len(queries)),
@@ -101,6 +103,8 @@ async def fetch_gtrends(seed_query: str, category: str = "fashion") -> SourceSig
             widgets = payload.get("widgets") or []
             if not widgets:
                 return _empty("gtrends")
+            # Presence signal only: the widget endpoint confirms interest exists
+            # but exposes no magnitude without the private API — flat value.
             return SourceSignal(
                 source="gtrends", status="fresh",
                 queries=[seed, f"{seed} 2026", f"best {seed}"],
@@ -133,6 +137,7 @@ async def fetch_amazon_movers(seed_query: str, category: str = "fashion") -> Sou
             queries = [q for q in queries if q][:6]
             if not queries:
                 return _empty("amazon")
+            # Breadth proxy (see shopping): suggestion count, not sales velocity.
             return SourceSignal(
                 source="amazon", status="fresh", queries=queries,
                 demand_hint=min(100.0, 45.0 + 9.0 * len(queries)),
@@ -168,6 +173,9 @@ async def fetch_pinterest(seed_query: str, category: str = "fashion") -> SourceS
             queries = [q for q in queries if q][:6]
             if not queries:
                 return _empty("pinterest")
+            # Breadth proxy (see shopping): guided-search suggestion count.
+            # Measured Pinterest momentum (search_count/MoM) flows through the
+            # official-trends ingestion path instead, labeled pinterest_measured.
             return SourceSignal(
                 source="pinterest", status="fresh", queries=queries,
                 demand_hint=min(100.0, 50.0 + 8.0 * len(queries)),

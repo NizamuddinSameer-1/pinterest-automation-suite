@@ -129,7 +129,7 @@ const LargeTrajectoryGraph: React.FC<{
   height?: number;
 }> = ({
   data,
-  dates = ['Jun 2026', 'Jul 2026', 'Aug 2026', 'Sep 2026'],
+  dates = [],
   color = '#e60023',
   height = 150,
 }) => {
@@ -259,6 +259,23 @@ const LargeTrajectoryGraph: React.FC<{
   );
 };
 
+/** Related-search suggestions with legacy-key fallback (backend renamed the field). */
+const relatedSearchesOf = (data: TrendDeepDiveResponse): string[] =>
+  data.related_searches ?? data.commonly_searched_for ?? [];
+
+/** Provenance pill config for radar entries — every data class gets a label. */
+const originBadge = (origin?: string): { text: string; color: string; bg: string; border: string } => {
+  switch (origin) {
+    case 'pinterest_live':
+      return { text: '● Live Pinterest', color: '#34d399', bg: 'rgba(16, 185, 129, 0.12)', border: '1px solid rgba(16, 185, 129, 0.35)' };
+    case 'custom_query':
+      return { text: '● On-demand scan', color: '#38bdf8', bg: 'rgba(56, 189, 248, 0.12)', border: '1px solid rgba(56, 189, 248, 0.35)' };
+    case 'curated_seed':
+    default:
+      return { text: '● Seed re-scan', color: '#94a3b8', bg: 'rgba(148, 163, 184, 0.12)', border: '1px solid rgba(148, 163, 184, 0.3)' };
+  }
+};
+
 /** Deep-Dive Slide-Over Drawer for Pinterest Trends */
 const TrendDeepDiveDrawer: React.FC<{
   isOpen: boolean;
@@ -384,7 +401,7 @@ const TrendDeepDiveDrawer: React.FC<{
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            {data && (
+            {data && data.metric_provenance !== 'unavailable' && data.mom_change != null && (
               <span
                 style={{
                   display: 'inline-flex',
@@ -493,55 +510,72 @@ const TrendDeepDiveDrawer: React.FC<{
                 </div>
               </div>
 
-              {/* 52-Week Search Trajectory Curve (0-100 indexed) */}
-              <div
-                style={{
-                  background: 'rgba(22, 27, 34, 0.75)',
-                  border: '1px solid var(--border-subtle)',
-                  borderRadius: '14px',
-                  padding: '20px',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: '14px',
-                }}
-              >
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div>
-                    <h3 style={{ fontSize: '1.05rem', fontWeight: 800, margin: 0, color: '#fff' }}>
-                      Search Momentum Curve
-                    </h3>
-                    <p style={{ fontSize: '0.76rem', color: 'var(--text-secondary)', margin: '3px 0 0 0' }}>
-                      Official Pinterest interest index across 52 weeks
-                    </p>
+              {/* 52-Week Search Trajectory Curve (0-100 indexed) — measured data only */}
+              {data.metric_provenance !== 'unavailable' ? (
+                <div
+                  style={{
+                    background: 'rgba(22, 27, 34, 0.75)',
+                    border: '1px solid var(--border-subtle)',
+                    borderRadius: '14px',
+                    padding: '20px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '14px',
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div>
+                      <h3 style={{ fontSize: '1.05rem', fontWeight: 800, margin: 0, color: '#fff' }}>
+                        Search Momentum Curve
+                      </h3>
+                      <p style={{ fontSize: '0.76rem', color: 'var(--text-secondary)', margin: '3px 0 0 0' }}>
+                        Official Pinterest interest index across 52 weeks
+                      </p>
+                    </div>
+                    <div style={{ display: 'flex', gap: '8px' }}>
+                      <span
+                        style={{
+                          padding: '4px 10px',
+                          borderRadius: '6px',
+                          background: 'rgba(16, 185, 129, 0.15)',
+                          border: '1px solid rgba(16, 185, 129, 0.35)',
+                          color: '#34d399',
+                          fontSize: '0.74rem',
+                          fontWeight: 700,
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '4px',
+                        }}
+                      >
+                        <TrendingUp size={12} />
+                        +{data.wow_change}% WoW
+                      </span>
+                    </div>
                   </div>
-                  <div style={{ display: 'flex', gap: '8px' }}>
-                    <span
-                      style={{
-                        padding: '4px 10px',
-                        borderRadius: '6px',
-                        background: 'rgba(16, 185, 129, 0.15)',
-                        border: '1px solid rgba(16, 185, 129, 0.35)',
-                        color: '#34d399',
-                        fontSize: '0.74rem',
-                        fontWeight: 700,
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '4px',
-                      }}
-                    >
-                      <TrendingUp size={12} />
-                      +{data.wow_change}% WoW
-                    </span>
-                  </div>
-                </div>
 
-                <LargeTrajectoryGraph
-                  data={data.sparkline}
-                  dates={data.timeline_dates}
-                  color={data.mom_change > 200 ? '#e60023' : '#a855f7'}
-                  height={150}
-                />
-              </div>
+                  <LargeTrajectoryGraph
+                    data={data.sparkline}
+                    dates={data.timeline_dates}
+                    color={(data.mom_change ?? 0) > 200 ? '#e60023' : '#a855f7'}
+                    height={150}
+                  />
+                </div>
+              ) : (
+                <div
+                  style={{
+                    background: 'rgba(56, 189, 248, 0.08)',
+                    border: '1px solid rgba(56, 189, 248, 0.3)',
+                    borderRadius: '12px',
+                    padding: '14px 18px',
+                    fontSize: '0.85rem',
+                    color: '#7dd3fc',
+                    fontWeight: 600,
+                  }}
+                >
+                  No measured search data for this term — Pinterest returned no trajectory.
+                  The pins below are live Pinterest results.
+                </div>
+              )}
 
               {/* 20-Day Early-Pinning Indexing Buffer Warning */}
               {data.indexing_window && (
@@ -589,8 +623,8 @@ const TrendDeepDiveDrawer: React.FC<{
                 </div>
               )}
 
-              {/* Commonly Searched For (Screenshot 3) */}
-              {data.commonly_searched_for && data.commonly_searched_for.length > 0 && (
+              {/* Related Searches — auto-generated suggestions, not Pinterest measurements */}
+              {relatedSearchesOf(data).length > 0 && (
                 <div
                   style={{
                     background: 'rgba(22, 27, 34, 0.75)',
@@ -605,15 +639,15 @@ const TrendDeepDiveDrawer: React.FC<{
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px' }}>
                     <div>
                       <h3 style={{ fontSize: '1.05rem', fontWeight: 800, margin: 0, color: '#fff' }}>
-                        Pinners engaging with this trend commonly search for:
+                        Related searches
                       </h3>
                       <p style={{ fontSize: '0.76rem', color: 'var(--text-secondary)', margin: '3px 0 0 0' }}>
-                        Click any keyword to pivot the deep-dive radar or copy all for your pin description SEO
+                        Auto-generated suggestions — not measured Pinterest data. Click any keyword to pivot the deep-dive radar or copy all for your pin description SEO
                       </p>
                     </div>
 
                     <button
-                      onClick={() => onCopyKeywords(data.commonly_searched_for)}
+                      onClick={() => onCopyKeywords(relatedSearchesOf(data))}
                       style={{
                         display: 'flex',
                         alignItems: 'center',
@@ -645,7 +679,7 @@ const TrendDeepDiveDrawer: React.FC<{
 
                   {/* Pills cluster */}
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
-                    {data.commonly_searched_for.map((queryTag) => (
+                    {relatedSearchesOf(data).map((queryTag) => (
                       <button
                         key={queryTag}
                         onClick={() => onSelectKeyword(queryTag)}
@@ -705,6 +739,22 @@ const TrendDeepDiveDrawer: React.FC<{
                   </h3>
                 </div>
 
+                {(!data.popular_pins || data.popular_pins.length === 0) && (
+                  <div
+                    style={{
+                      border: '1px dashed rgba(255, 255, 255, 0.2)',
+                      borderRadius: '12px',
+                      padding: '22px',
+                      textAlign: 'center',
+                      fontSize: '0.85rem',
+                      color: 'var(--text-muted)',
+                      fontWeight: 600,
+                    }}
+                  >
+                    No live pins captured for this term — Pinterest returned no images.
+                  </div>
+                )}
+
                 <div
                   style={{
                     display: 'grid',
@@ -759,18 +809,16 @@ const TrendDeepDiveDrawer: React.FC<{
                               const target = e.currentTarget as HTMLImageElement;
                               if (!target.dataset.hasFallback) {
                                 target.dataset.hasFallback = 'true';
-                                const fallbackList = [
-                                  'https://images.unsplash.com/photo-1544441893-675973e31985?w=736&q=85',
-                                  'https://images.unsplash.com/photo-1591047139829-d91aecb6caea?w=736&q=85',
-                                  'https://images.unsplash.com/photo-1490481651871-ab68de25d43d?w=736&q=85',
-                                  'https://images.unsplash.com/photo-1632345031435-8727f6897d53?w=736&q=85',
-                                  'https://images.unsplash.com/photo-1522337360788-8b13dee7a37e?w=736&q=85',
-                                  'https://images.unsplash.com/photo-1509198397868-475647b2a1e5?w=736&q=85',
-                                  'https://images.unsplash.com/photo-1604654894610-df63bc536371?w=736&q=85',
-                                  'https://images.unsplash.com/photo-1485230895905-ec40ba36b9bc?w=736&q=85',
-                                ];
-                                const hash = (pin.pin_id || '').split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
-                                target.src = fallbackList[Math.abs(hash) % fallbackList.length];
+                                // Honest placeholder: clearly not a pin photo, no network fetch.
+                                // Never swap in an unrelated stock photo for a dead image.
+                                target.src =
+                                  'data:image/svg+xml;utf8,' +
+                                  encodeURIComponent(
+                                    `<svg xmlns='http://www.w3.org/2000/svg' width='600' height='800'>` +
+                                      `<rect width='100%' height='100%' fill='#161b22'/>` +
+                                      `<text x='50%' y='50%' fill='#8b949e' font-size='28' text-anchor='middle' font-family='sans-serif'>Preview unavailable</text>` +
+                                      `</svg>`
+                                  );
                               }
                             }}
                           />
@@ -972,6 +1020,7 @@ export const TrendRadar: React.FC<TrendRadarProps> = ({
 
   // ── Official Pinterest Trends State ──────────
   const [pinterestTrends, setPinterestTrends] = useState<PinterestOfficialTrendItem[]>([]);
+  const [pinterestProvenance, setPinterestProvenance] = useState<{ source: string; is_fallback: boolean } | null>(null);
   const [pinterestPreset, setPinterestPreset] = useState<string>('breakout');
   const [pinterestIntent, setPinterestIntent] = useState<string>('all');
   const [customPinterestTrend, setCustomPinterestTrend] = useState<PinterestOfficialTrendItem | null>(null);
@@ -1010,13 +1059,20 @@ export const TrendRadar: React.FC<TrendRadarProps> = ({
     try {
       const data = await api.getOfficialPinterestTrends(preset, intent, forceRefresh);
       setPinterestTrends(data.trends || []);
+      setPinterestProvenance({ source: data.source || '', is_fallback: !!data.is_fallback });
       if (forceRefresh) {
-        setRescanSuccess(`Official Pinterest Trends updated from trends.pinterest.com! Refreshed 52-week search momentum & 20-day viral index windows.`);
+        setRescanSuccess(
+          data.is_fallback
+            ? `Live scrape failed — showing curated fallback terms (demo data, not measured).`
+            : `Official Pinterest Trends updated from trends.pinterest.com! Refreshed 52-week search momentum & 20-day viral index windows.`
+        );
         setTimeout(() => setRescanSuccess(null), 6000);
       }
     } catch (err: any) {
       console.error('Failed to load official Pinterest trends:', err);
       setError(err.message || 'Failed to scrape official Pinterest trends');
+      // Don't assert freshness we don't have — drop the source badge on error.
+      setPinterestProvenance(null);
     } finally {
       setPinterestLoading(false);
     }
@@ -1030,7 +1086,7 @@ export const TrendRadar: React.FC<TrendRadarProps> = ({
       const data = await api.getTrends(cat, forceRefresh);
       setCommercialTrends(data.trends || []);
       if (forceRefresh) {
-        setRescanSuccess(`Market scan refreshed! Updated commercial search demand & live product matches.`);
+        setRescanSuccess(`Market scan refreshed! Updated commercial search demand & product matches.`);
         setTimeout(() => setRescanSuccess(null), 5000);
       }
     } catch (err: any) {
@@ -1080,7 +1136,8 @@ export const TrendRadar: React.FC<TrendRadarProps> = ({
         const cat = selectedCategory !== 'all' ? selectedCategory : 'fashion';
         const dossier = await api.queryTrend(cleanQ, cat, true);
         setCustomCommercialTrend(dossier);
-        setRescanSuccess(`Deep scan complete for "${cleanQ}"! Found ${dossier.matched_products?.length || 0} live matched products.`);
+        const liveMatches = (dossier.matched_products || []).filter((p) => !p.demo_only).length;
+        setRescanSuccess(`Deep scan complete for "${cleanQ}"! Found ${liveMatches} live matched products.`);
         setTimeout(() => setRescanSuccess(null), 6000);
         setTimeout(() => {
           spotlightRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -1872,6 +1929,31 @@ export const TrendRadar: React.FC<TrendRadarProps> = ({
       {/* ── Official Pinterest Trends Feed ───────── */}
       {radarMode === 'pinterest' && (
         <>
+          {pinterestProvenance && (
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                padding: '9px 14px',
+                borderRadius: '10px',
+                fontSize: '0.78rem',
+                fontWeight: 700,
+                marginBottom: '14px',
+                background: pinterestProvenance.is_fallback
+                  ? 'rgba(245, 158, 11, 0.1)'
+                  : 'rgba(16, 185, 129, 0.08)',
+                border: pinterestProvenance.is_fallback
+                  ? '1px solid rgba(245, 158, 11, 0.35)'
+                  : '1px solid rgba(16, 185, 129, 0.3)',
+                color: pinterestProvenance.is_fallback ? '#fbbf24' : '#34d399',
+              }}
+            >
+              {pinterestProvenance.is_fallback
+                ? '● Curated fallback — live scrape failed, demo terms shown (not measured)'
+                : '● Live — trends.pinterest.com'}
+            </div>
+          )}
           {pinterestLoading ? (
             <div style={{
               padding: '60px 0',
@@ -1962,6 +2044,21 @@ export const TrendRadar: React.FC<TrendRadarProps> = ({
                           }}>
                             {trend.intent === 'viral_blog' ? '💅 Viral Inspo' : '🛍️ Product'}
                           </span>
+                          {trend.is_fallback && (
+                            <span
+                              title="Demo term — live scrape failed, not measured"
+                              style={{
+                                fontSize: '0.7rem',
+                                color: '#fbbf24',
+                                background: 'rgba(245, 158, 11, 0.15)',
+                                padding: '2px 8px',
+                                borderRadius: '6px',
+                                fontWeight: 800,
+                              }}
+                            >
+                              Demo
+                            </span>
+                          )}
                         </div>
 
                         {/* MoM & WoW Badges */}
@@ -2317,6 +2414,29 @@ export const TrendRadar: React.FC<TrendRadarProps> = ({
                         }}>
                           {trend.category}
                         </span>
+                        {(() => {
+                          const badge = originBadge(trend.origin);
+                          const bd = trend.score_breakdown;
+                          const tip = bd
+                            ? `Demand: ${bd.demand_source ?? 'n/a'} · Money: ${bd.money_source ?? 'n/a'} · Winnability: ${bd.winnability_source ?? 'n/a'}`
+                            : undefined;
+                          return (
+                            <span
+                              title={tip}
+                              style={{
+                                fontSize: '0.68rem',
+                                color: badge.color,
+                                background: badge.bg,
+                                border: badge.border,
+                                padding: '2px 8px',
+                                borderRadius: '6px',
+                                fontWeight: 800,
+                              }}
+                            >
+                              {badge.text}
+                            </span>
+                          );
+                        })()}
                       </div>
 
                       <div style={{
@@ -2407,6 +2527,21 @@ export const TrendRadar: React.FC<TrendRadarProps> = ({
                       }}>
                         {trend.matched_products.slice(0, 1).map((prod) => (
                           <div key={prod.asin}>
+                            {prod.demo_only && (
+                              <div style={{
+                                display: 'inline-block',
+                                fontSize: '0.68rem',
+                                fontWeight: 800,
+                                color: '#fbbf24',
+                                background: 'rgba(245, 158, 11, 0.12)',
+                                border: '1px solid rgba(245, 158, 11, 0.35)',
+                                padding: '2px 8px',
+                                borderRadius: '6px',
+                                marginBottom: '8px',
+                              }}>
+                                Demo concept — not a real listing
+                              </div>
+                            )}
                             <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
                               <img
                                 src={prod.image_url}
@@ -2421,28 +2556,50 @@ export const TrendRadar: React.FC<TrendRadarProps> = ({
                                 }}
                               />
                               <div style={{ flex: 1, minWidth: 0 }}>
-                                <a
-                                  href={prod.affiliate_url}
-                                  target="_blank"
-                                  rel="noreferrer"
-                                  style={{
-                                    fontSize: '0.76rem',
-                                    fontWeight: 600,
-                                    color: '#fff',
-                                    textDecoration: 'none',
-                                    display: '-webkit-box',
-                                    WebkitLineClamp: 2,
-                                    WebkitBoxOrient: 'vertical',
-                                    overflow: 'hidden',
-                                  }}
-                                >
-                                  {prod.title}
-                                </a>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px' }}>
-                                  <span style={{ fontSize: '0.82rem', fontWeight: 800, color: '#10b981' }}>
-                                    ${typeof prod.price === 'number' ? prod.price.toFixed(2) : prod.price}
+                                {prod.demo_only ? (
+                                  <span
+                                    style={{
+                                      fontSize: '0.76rem',
+                                      fontWeight: 600,
+                                      color: '#fff',
+                                      display: '-webkit-box',
+                                      WebkitLineClamp: 2,
+                                      WebkitBoxOrient: 'vertical',
+                                      overflow: 'hidden',
+                                    }}
+                                  >
+                                    {prod.title}
                                   </span>
-                                </div>
+                                ) : (
+                                  <a
+                                    href={prod.affiliate_url}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    style={{
+                                      fontSize: '0.76rem',
+                                      fontWeight: 600,
+                                      color: '#fff',
+                                      textDecoration: 'none',
+                                      display: '-webkit-box',
+                                      WebkitLineClamp: 2,
+                                      WebkitBoxOrient: 'vertical',
+                                      overflow: 'hidden',
+                                    }}
+                                  >
+                                    {prod.title}
+                                  </a>
+                                )}
+                                {prod.demo_only ? (
+                                  <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '4px' }}>
+                                    Illustrative example — no live Amazon match (PA-API offline).
+                                  </div>
+                                ) : (
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px' }}>
+                                    <span style={{ fontSize: '0.82rem', fontWeight: 800, color: '#10b981' }}>
+                                      ${typeof prod.price === 'number' ? prod.price.toFixed(2) : prod.price}
+                                    </span>
+                                  </div>
+                                )}
                               </div>
                             </div>
 

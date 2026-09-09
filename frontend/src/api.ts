@@ -1045,7 +1045,8 @@ export interface TrendDossier {
   related_queries: string[];
   matched_products: TrendProduct[];
   discovered_at?: string;
-  score_breakdown?: { demand: number; money: number; winnability: number; weights_version: number; weights_fingerprint?: string };
+  origin?: 'curated_seed' | 'pinterest_live' | 'custom_query' | string;
+  score_breakdown?: { demand: number; money: number; winnability: number; weights_version: number; weights_fingerprint?: string; demand_source?: string; money_source?: string; winnability_source?: string };
   sources?: { source: string; status: string }[];
   keyword_pack?: { primary: string; long_tails: string[]; hooks: { variation_index: number; framework: string }[]; board_angle: string; negative_terms: string[]; pack_version: number };
 }
@@ -1057,8 +1058,9 @@ export interface PinterestOfficialTrendItem {
   mom_change: number;
   wow_change: number;
   yoy_change?: number | null;
-  search_count: number;
+  search_count: number | null;
   sparkline: number[];
+  timeline_dates?: string[];
   indexing_window: {
     advice: string;
     urgency: 'immediate' | 'high' | 'medium' | 'normal' | string;
@@ -1068,11 +1070,14 @@ export interface PinterestOfficialTrendItem {
   recommended_board: string;
   monetization_angle: string;
   preview_images: string[];
+  provenance?: 'live' | 'curated_fallback' | string;
+  is_fallback?: boolean;
 }
 
 export interface PinterestOfficialTrendsResponse {
   success: boolean;
   source: string;
+  is_fallback: boolean;
   preset: string;
   intent: string;
   country: string;
@@ -1093,21 +1098,25 @@ export interface PopularPinItem {
 export interface TrendDeepDiveResponse {
   term: string;
   category: string;
+  metric_provenance?: 'live' | 'unavailable' | string;
   description: string;
-  mom_change: number;
-  wow_change: number;
+  mom_change: number | null;
+  wow_change: number | null;
   yoy_change?: number | null;
-  search_count: number;
+  search_count: number | null;
   sparkline: number[];
   timeline_dates: string[];
-  commonly_searched_for: string[];
+  related_searches: string[];
+  related_searches_provenance?: string;
+  /** Legacy key — backend no longer writes it; kept for transition only. */
+  commonly_searched_for?: string[];
   popular_pins: PopularPinItem[];
   indexing_window: {
     advice: string;
     urgency: 'immediate' | 'high' | 'medium' | 'normal' | string;
     badge: string;
     phase: string;
-  };
+  } | null;
   recommended_board: string;
   monetization_angle: string;
 }

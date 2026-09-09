@@ -38,6 +38,7 @@ from app.services.trend_research import (
     DEMO_ASINS,
     analyze_custom_trend_query,
     discover_trends_radar,
+    select_snapshot_dossiers,
 )
 
 logger = logging.getLogger("pre.api.research")
@@ -67,6 +68,7 @@ class LaunchTrendCampaignRequest(BaseModel):
 async def get_trends_radar(
     category: str = Query("all", description="Category filter: all | fashion | home | kitchen | tech | seasonal"),
     refresh: bool = Query(False, description="Force live market re-scan bypassing snapshot cache"),
+    include_pinterest: bool = Query(True, description="Ingest today's measured Pinterest trends alongside curated seeds"),
 ) -> dict[str, Any]:
     """
     Get today's real-time Trend Radar feed with live Google Shopping search momentum,
@@ -79,29 +81,27 @@ async def get_trends_radar(
             snap_file = snap_dir / f"{datetime.now(timezone.utc).strftime('%Y-%m-%d')}.json"
             if snap_file.exists():
                 try:
-                    age_s = (datetime.now(timezone.utc).timestamp() - snap_file.stat().st_mtime)
-                    if age_s < 3600:
-                        payload = json.loads(snap_file.read_text(encoding="utf-8"))
-                        dossiers = payload.get("dossiers") or []
-                        if category and category != "all":
-                            filtered = [d for d in dossiers if d.get("category") == category]
-                        else:
-                            filtered = dossiers
-                        # Only return snapshot if we actually have dossiers for this category
-                        if len(filtered) > 0:
-                            return {
-                                "success": True,
-                                "category": category,
-                                "count": len(filtered),
-                                "trends": filtered,
-                            }
+                    now_s = datetime.now(timezone.utc).timestamp()
+                    payload = json.loads(snap_file.read_text(encoding="utf-8"))
+                    # Version-, weights- and age-checked; None falls through to live scan.
+                    filtered = select_snapshot_dossiers(
+                        payload, category,
+                        scanned_at_s=snap_file.stat().st_mtime, now_s=now_s,
+                    )
+                    if filtered:
+                        return {
+                            "success": True,
+                            "category": category,
+                            "count": len(filtered),
+                            "trends": filtered,
+                        }
                 except Exception as e:
                     logger.warning("Trend snapshot unreadable, falling through to live scan: %s", e)
         except Exception as e:
             logger.warning("Trend snapshot check failed, falling through to live scan: %s", e)
 
     try:
-        trends = await discover_trends_radar(category_filter=category)
+        trends = await discover_trends_radar(category_filter=category, include_pinterest=include_pinterest)
         if category and category != "all":
             trends = [t for t in trends if t.get("category") == category]
         return {
@@ -324,9 +324,11 @@ async def get_pinterest_official_trends(
             country=country,
             force_refresh=refresh,
         )
+        is_fallback = bool(trends) and all(t.get("is_fallback", False) for t in trends)
         return {
             "success": True,
-            "source": "trends.pinterest.com",
+            "source": "curated_fallback" if is_fallback else "trends.pinterest.com",
+            "is_fallback": is_fallback,
             "preset": preset,
             "intent": intent,
             "country": country,
@@ -350,29 +352,21 @@ async def query_pinterest_official_trend(body: OfficialPinterestTrendQueryReques
     try:
         item = await scrape_custom_pinterest_trend_metrics(query=clean_q, country=body.country)
         if not item:
-            item = {
-                "term": clean_q,
-                "category": "beauty" if "nail" in clean_q.lower() or "hair" in clean_q.lower() else "fashion",
-                "intent": "viral_blog",
-                "mom_change": 150.0,
-                "wow_change": 35.0,
-                "yoy_change": None,
-                "search_count": 45,
-                "sparkline": [10, 15, 20, 28, 38, 50, 65, 80],
-                "indexing_window": {
-                    "advice": "⏰ Pin NOW — Expected Peak in 20–30 Days",
-                    "urgency": "high",
-                    "badge": "Prime Early Window",
-                    "phase": "rising",
-                },
-                "recommended_board": f"{clean_q.title()} Inspo & Ideas",
-                "monetization_angle": "Viral Blog / Lookbook Gallery Traffic",
-                "preview_images": ["https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?w=500&q=80"],
-            }
+            # Honest miss: Pinterest returned no trajectory for this term.
+            # Never invent a sparkline / growth numbers and call it success.
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    f"No Pinterest Trends data for {clean_q!r} (region {body.country}). "
+                    "Try a broader term or check the spelling."
+                ),
+            )
         return {
             "success": True,
             "trend": item,
         }
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error("Failed to query custom Pinterest trend %r: %s", body.query, e)
         raise HTTPException(status_code=500, detail=f"Custom Pinterest trend query failed: {e}") from e

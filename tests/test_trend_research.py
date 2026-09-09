@@ -87,12 +87,17 @@ async def test_discover_trends_radar():
     async def _fake_match(query, category, fallback_items=None, item_count=2):
         return []
 
+    async def _no_pinterest(*args, **kwargs):
+        return []
+
     with patch.object(tr, "_scan_seed_signals", new_callable=AsyncMock) as mock_scan, \
          patch.object(tr, "match_amazon_products_for_trend", new_callable=AsyncMock) as mock_match, \
+         patch.object(tr, "_fetch_pinterest_discovery", new_callable=AsyncMock) as mock_pin, \
          patch.object(tr, "_write_snapshot", return_value=None):
 
         mock_scan.side_effect = _fake_scan
         mock_match.side_effect = _fake_match
+        mock_pin.side_effect = _no_pinterest
 
         fashion_dossiers = await tr.discover_trends_radar(category_filter="fashion")
         assert len(fashion_dossiers) > 0
@@ -142,6 +147,320 @@ async def test_analyze_custom_trend_query(tmp_path):
         assert len(dossier["related_queries"]) > 0
         assert len(dossier["matched_products"]) > 0
         assert "recommended_board" in dossier
+
+
+@pytest.mark.asyncio
+async def test_custom_badge_has_no_fabricated_percentages(tmp_path):
+    """Custom dossier badges must not invent growth percentages."""
+    import datetime as _dt
+    from app.services.trend_sources import SourceSignal
+
+    async def _fake_scan(seed_query, category):
+        return [SourceSignal(
+            source="shopping", status="fresh",
+            queries=[seed_query, f"{seed_query} aesthetic"],
+            demand_hint=80.0,
+            fetched_at=_dt.datetime.now(_dt.timezone.utc).isoformat(),
+        )]
+
+    with patch.object(tr, "_scan_seed_signals", new_callable=AsyncMock) as mock_scan, \
+         patch.object(tr, "match_amazon_products_for_trend", new_callable=AsyncMock) as mock_match, \
+         patch.object(tr, "_trend_cache_dir", return_value=tmp_path / "custom_cache"):
+        mock_scan.side_effect = _fake_scan
+        mock_match.return_value = []
+
+        plain = await tr.analyze_custom_trend_query("japandi coffee bar", category="kitchen")
+        assert "%" not in plain["heat_badge"]
+        assert "180" not in plain["heat_badge"] and "350" not in plain["heat_badge"]
+
+        seasonal = await tr.analyze_custom_trend_query("fall porch decor", category="home")
+        assert "%" not in seasonal["heat_badge"]
+        assert seasonal["heat_level"] == "breakout"
+        assert plain["heat_level"] == "rising"
+
+
+@pytest.mark.asyncio
+async def test_build_pinterest_dossier_measured_demand():
+    """Pinterest ingestion scores measured search_count and labels provenance."""
+    import datetime as _dt
+    from app.services.trend_sources import SourceSignal
+
+    async def _fake_scan(seed_query, category):
+        return [SourceSignal(
+            source="shopping", status="fresh",
+            queries=[seed_query, f"{seed_query} aesthetic"],
+            demand_hint=70.0,
+            fetched_at=_dt.datetime.now(_dt.timezone.utc).isoformat(),
+        )]
+
+    item = {
+        "term": "chrome french tip nails",
+        "category": "beauty",
+        "mom_change": 420.0,
+        "wow_change": 30.0,
+        "search_count": 88,
+        "sparkline": [4, 12, 40, 88],
+        "timeline_dates": ["Dec 2025", "Mar 2026", "Jun 2026", "Sep 2026"],
+        "recommended_board": "Chrome Nails",
+        "provenance": "live",
+        "is_fallback": False,
+    }
+
+    with patch.object(tr, "_scan_seed_signals", new_callable=AsyncMock) as mock_scan, \
+         patch.object(tr, "match_amazon_products_for_trend", new_callable=AsyncMock) as mock_match:
+        mock_scan.side_effect = _fake_scan
+        mock_match.return_value = []
+
+        d = await tr._build_pinterest_dossier(item)
+
+    assert d is not None
+    assert d["origin"] == "pinterest_live"
+    assert d["category"] == "fashion"  # beauty maps to the fashion bucket
+    assert d["pinterest_category"] == "beauty"
+    # Measured demand 88, neutral money 50 (no live products), win 46 (2 angles):
+    # 0.40*88 + 0.35*50 + 0.25*46 = 64.2 → 64 / Tier B
+    assert d["opportunity_score"] == 64
+    assert d["tier"] == "Tier B"
+    assert d["score_breakdown"]["demand_source"] == "pinterest_measured"
+    assert d["score_breakdown"]["money_source"] == "neutral_no_data"
+    assert d["score_breakdown"]["winnability_source"] == "angle_breadth_proxy"
+    assert "%" not in d["heat_badge"]
+    assert d["keyword_pack"]["primary"] == "chrome french tip nails"
+    assert d["mom_change"] == 420.0
+    assert d["sparkline"] == [4, 12, 40, 88]
+    assert d["provenance"] == "live"
+
+
+@pytest.mark.asyncio
+async def test_build_pinterest_dossier_proxy_when_unmeasured():
+    """search_count None degrades honestly to the autocomplete proxy label."""
+    import datetime as _dt
+    from app.services.trend_sources import SourceSignal
+
+    async def _fake_scan(seed_query, category):
+        return [SourceSignal(
+            source="shopping", status="fresh",
+            queries=[seed_query],
+            demand_hint=75.0,
+            fetched_at=_dt.datetime.now(_dt.timezone.utc).isoformat(),
+        )]
+
+    item = {"term": "velvet ribbon decor", "category": "home", "mom_change": 20.0,
+            "search_count": None, "is_fallback": False}
+
+    with patch.object(tr, "_scan_seed_signals", new_callable=AsyncMock) as mock_scan, \
+         patch.object(tr, "match_amazon_products_for_trend", new_callable=AsyncMock) as mock_match:
+        mock_scan.side_effect = _fake_scan
+        mock_match.return_value = []
+
+        d = await tr._build_pinterest_dossier(item)
+
+    assert d is not None
+    assert d["score_breakdown"]["demand_source"] == "autocomplete_breadth_proxy"
+    # Proxy demand 75, neutral money 50, win 38 (1 angle):
+    # 0.40*75 + 0.35*50 + 0.25*38 = 57 / Tier B
+    assert d["opportunity_score"] == 57
+    assert await tr._build_pinterest_dossier({"term": "  "}) is None
+
+
+@pytest.mark.asyncio
+async def test_discover_includes_pinterest_and_sorts():
+    """Full scan mixes measured Pinterest entries with seeds, sorted desc."""
+    import datetime as _dt
+    from app.services.trend_sources import SourceSignal
+
+    async def _fake_scan(seed_query, category):
+        return [SourceSignal(
+            source="shopping", status="fresh",
+            queries=[seed_query],
+            demand_hint=10.0,
+            fetched_at=_dt.datetime.now(_dt.timezone.utc).isoformat(),
+        )]
+
+    pin_items = [
+        {"term": "hot measured trend", "category": "fashion", "mom_change": 900.0,
+         "search_count": 100, "sparkline": [90, 100], "is_fallback": False},
+    ]
+
+    with patch.object(tr, "_scan_seed_signals", new_callable=AsyncMock) as mock_scan, \
+         patch.object(tr, "match_amazon_products_for_trend", new_callable=AsyncMock) as mock_match, \
+         patch.object(tr, "_fetch_pinterest_discovery", new_callable=AsyncMock) as mock_pin, \
+         patch.object(tr, "_write_snapshot", return_value=None) as mock_snap:
+        mock_scan.side_effect = _fake_scan
+        mock_match.return_value = []
+        mock_pin.return_value = pin_items
+
+        dossiers = await tr.discover_trends_radar()
+
+    origins = {d["origin"] for d in dossiers}
+    assert "pinterest_live" in origins
+    assert "curated_seed" in origins
+    # Measured 100 (money 50 neutral, win 38) → 67 tops proxy seeds (10 → 31)
+    assert dossiers[0]["id"] == "pin-trend-hot_measured_trend"
+    scores = [d["opportunity_score"] for d in dossiers]
+    assert scores == sorted(scores, reverse=True)
+    assert mock_snap.called
+
+
+@pytest.mark.asyncio
+async def test_discover_pinterest_failsoft():
+    """Broken discovery degrades to seeds-only — never raises, never demo data."""
+    import datetime as _dt
+    from app.services.trend_sources import SourceSignal
+
+    async def _fake_scan(seed_query, category):
+        return [SourceSignal(
+            source="shopping", status="fresh",
+            queries=[seed_query],
+            demand_hint=50.0,
+            fetched_at=_dt.datetime.now(_dt.timezone.utc).isoformat(),
+        )]
+
+    with patch.object(tr, "_scan_seed_signals", new_callable=AsyncMock) as mock_scan, \
+         patch.object(tr, "match_amazon_products_for_trend", new_callable=AsyncMock) as mock_match, \
+         patch.object(tr, "_fetch_pinterest_discovery", new_callable=AsyncMock) as mock_pin, \
+         patch.object(tr, "_write_snapshot", return_value=None):
+        mock_scan.side_effect = _fake_scan
+        mock_match.return_value = []
+        mock_pin.side_effect = RuntimeError("playwright exploded")
+
+        dossiers = await tr.discover_trends_radar()
+
+    assert len(dossiers) > 0
+    assert all(d["origin"] == "curated_seed" for d in dossiers)
+
+
+def test_snapshot_prunes_stale_pinterest(tmp_path, monkeypatch):
+    """Full scans evict yesterday's Pinterest ids; seeds and filtered scans are safe."""
+    import json
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "storage_path", str(tmp_path))
+
+    def _snap_file():
+        files = list((tmp_path / "trend_radar").glob("*.json"))
+        assert len(files) == 1
+        return files[0]
+
+    seed = {"id": "barn_jacket_heritage", "origin": "curated_seed", "opportunity_score": 40}
+    stale = {"id": "pin-trend-old_news", "origin": "pinterest_live", "opportunity_score": 90}
+    fresh = {"id": "pin-trend-today_thing", "origin": "pinterest_live", "opportunity_score": 70}
+
+    tr._write_snapshot([seed, stale])
+    snap_file = _snap_file()
+
+    # Full scan without the stale id prunes it; seed retained.
+    tr._write_snapshot([seed, fresh], prune_missing_origin="pinterest_live")
+    payload = json.loads(snap_file.read_text(encoding="utf-8"))
+    ids = {d["id"] for d in payload["dossiers"]}
+    assert ids == {"barn_jacket_heritage", "pin-trend-today_thing"}
+
+    # Without the prune flag (e.g. category scans) nothing is evicted.
+    tr._write_snapshot([seed])
+    payload = json.loads(snap_file.read_text(encoding="utf-8"))
+    assert {d["id"] for d in payload["dossiers"]} == {"barn_jacket_heritage", "pin-trend-today_thing"}
+
+
+def test_money_from_live_products_only():
+    """Money blends rating + review volume; demo/empty inputs stay neutral."""
+    money, source = tr._money_from_products([
+        {"asin": "B1", "rating": 4.6, "review_count": 840, "demo_only": False},
+        {"asin": "B2", "rating": 4.5, "review_count": 1250, "demo_only": False},
+    ])
+    assert source == "live_products"
+    # rating 4.55/5 → 91.0; volume 20*log10(2091) ≈ 66.4 → (91+66.4)/2 ≈ 78.7
+    assert money == pytest.approx(78.7, abs=0.2)
+    assert 0 <= money <= 100
+
+    # Demo placeholders must not move the needle.
+    money_demo, source_demo = tr._money_from_products([
+        {"asin": "B0DEMO", "rating": 5.0, "review_count": 999999, "demo_only": True},
+    ])
+    assert (money_demo, source_demo) == (50.0, "neutral_no_data")
+    assert tr._money_from_products([]) == (50.0, "neutral_no_data")
+    assert tr._money_from_products(None) == (50.0, "neutral_no_data")
+
+
+def test_winnability_scales_with_angles():
+    """More distinct angles → higher winnability; never a silent constant."""
+    assert tr._winnability_from_angles([]) == 30.0
+    assert tr._winnability_from_angles(None) == 30.0
+    assert tr._winnability_from_angles(["a", "b"]) == 46.0
+    assert tr._winnability_from_angles([f"q{i}" for i in range(8)]) == 94.0
+
+
+def test_blend_carries_sources():
+    """Blend output labels every input — Tier S must be reachable now."""
+    import datetime as _dt
+    from app.services.trend_sources import SourceSignal
+
+    signals = [SourceSignal(
+        source="shopping", status="fresh", queries=["x", "y"],
+        demand_hint=100.0, fetched_at=_dt.datetime.now(_dt.timezone.utc).isoformat(),
+    )]
+    products = [{"rating": 5.0, "review_count": 100000, "demo_only": False}]
+    blended = tr._blend_signals(signals, products=products, related=[f"q{i}" for i in range(8)])
+    assert blended["money_source"] == "live_products"
+    assert blended["winnability_source"] == "angle_breadth_proxy"
+    assert blended["money"] > 50.0
+    assert blended["winnability"] == 94.0
+
+    from app.services.trend_scorer import score_trend
+    top = score_trend(100.0, blended["money"], blended["winnability"])
+    assert top["tier"] == "S"
+
+
+def test_select_snapshot_dossiers():
+    """Version, weights, age and category gates all force rescan on mismatch."""
+    fp = tr._current_weights_fingerprint()
+    payload = {
+        "snapshot_version": tr.SNAPSHOT_VERSION,
+        "weights_fingerprint": fp,
+        "dossiers": [
+            {"id": "a", "category": "fashion", "opportunity_score": 90},
+            {"id": "b", "category": "home", "opportunity_score": 80},
+        ],
+    }
+    all_rows = tr.select_snapshot_dossiers(payload, "all", scanned_at_s=1000.0, now_s=2000.0)
+    assert [d["id"] for d in all_rows] == ["a", "b"]
+    fashion = tr.select_snapshot_dossiers(payload, "fashion", scanned_at_s=1000.0, now_s=2000.0)
+    assert [d["id"] for d in fashion] == ["a"]
+    assert tr.select_snapshot_dossiers(payload, "tech", scanned_at_s=1000.0, now_s=2000.0) is None
+    assert tr.select_snapshot_dossiers(payload, "all", scanned_at_s=1000.0, now_s=5000.0) is None
+    assert tr.select_snapshot_dossiers({**payload, "snapshot_version": 1}, "all",
+                                       scanned_at_s=1000.0, now_s=2000.0) is None
+    assert tr.select_snapshot_dossiers({**payload, "weights_fingerprint": "deadbeef"}, "all",
+                                       scanned_at_s=1000.0, now_s=2000.0) is None
+    assert tr.select_snapshot_dossiers(None, "all") is None
+
+
+@pytest.mark.asyncio
+async def test_custom_cache_key_tracks_weights(tmp_path, monkeypatch):
+    """Weight changes write a different custom-cache file (no stale scores)."""
+    import datetime as _dt
+    from app.config import settings
+    from app.services.trend_sources import SourceSignal
+
+    async def _fake_scan(seed_query, category):
+        return [SourceSignal(
+            source="shopping", status="fresh", queries=[seed_query],
+            demand_hint=70.0, fetched_at=_dt.datetime.now(_dt.timezone.utc).isoformat(),
+        )]
+
+    monkeypatch.setattr(settings, "storage_path", str(tmp_path))
+    with patch.object(tr, "_scan_seed_signals", new_callable=AsyncMock) as mock_scan, \
+         patch.object(tr, "match_amazon_products_for_trend", new_callable=AsyncMock) as mock_match:
+        mock_scan.side_effect = _fake_scan
+        mock_match.return_value = []
+
+        await tr.analyze_custom_trend_query("keyed query", category="fashion", refresh=True)
+        files_v1 = list((tmp_path / "trend_radar" / "custom_cache").glob("*.json"))
+        assert len(files_v1) == 1
+
+        monkeypatch.setattr(settings, "trend_weight_demand", 0.90)
+        await tr.analyze_custom_trend_query("keyed query", category="fashion", refresh=True)
+        files_v2 = list((tmp_path / "trend_radar" / "custom_cache").glob("*.json"))
+        assert len(files_v2) == 2
 
 
 @pytest.mark.asyncio
