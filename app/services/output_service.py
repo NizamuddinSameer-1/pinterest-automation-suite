@@ -94,28 +94,22 @@ async def _record_outputs(
     image_paths: list[str],
     prompt_version_id: str | None,
 ) -> list[JobOutput]:
-    # 1. Automatic Google Colab AI upscaling via Playwright if notebook or tunnel is configured
+    # Images reach this point already enhanced and watermark-cropped: the
+    # generation path (flow_automator / flow_direct_api) calls postprocess_image
+    # on save. So this stage adds only the optional GPU upscale, and must NOT
+    # re-run the local pipeline. It used to, and that second pass cropped the
+    # watermark band again (landing pins on four different aspect ratios) and
+    # applied the unsharp mask twice, which is what produced the halos.
     colab_notebook_url = getattr(settings, "colab_notebook_url", "").strip()
     colab_upscaler_url = getattr(settings, "colab_upscaler_url", "").strip()
-    colab_target = colab_notebook_url or colab_upscaler_url
-    upscaled_via_colab = False
 
-    if colab_target:
+    if colab_notebook_url or colab_upscaler_url:
         try:
             from app.services.colab_automator import upscale_images_via_colab
             await upscale_images_via_colab(image_paths, notebook_url=colab_notebook_url or None)
-            upscaled_via_colab = True
         except Exception as e:
-            logger.warning("Job %s: Colab AI upscaling note: %s. Continuing with local studio processing.", job.id, e)
-
-    # 2. Local studio postprocessing fallback if Colab was not used
-    # (upscale_images_via_colab already applied watermark crop and 4:4:4 studio encoding)
-    if not upscaled_via_colab:
-        try:
-            from app.services.anti_ai_processor import postprocess_batch
-            postprocess_batch(image_paths, skip_colab=True)
-        except Exception as e:
-            logger.warning("Job %s: studio postprocessing note: %s", job.id, e)
+            # Not fatal — the local enhancement has already been applied.
+            logger.warning("Job %s: Colab upscaling note: %s", job.id, e)
 
     # If job has multiple prompt versions (e.g. 1 per concept), link each output to its corresponding PV
     pv_result = await db.execute(

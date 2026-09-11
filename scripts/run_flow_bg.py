@@ -71,8 +71,11 @@ async def main(job_id: str, backend: str, count: int) -> int:
     from app.services.generation import (
         GenerationFailed,
         GenerationUnavailable,
+        compile_shot_requests,
+        generate_shot_set,
         generate_variations,
     )
+    from app.config import settings
 
     if not prompt_file.exists():
         write_status("error", error="No prompt.txt found; the endpoint should have written it.")
@@ -131,19 +134,67 @@ async def main(job_id: str, backend: str, count: int) -> int:
     # ── 1. Generate ───────────────────────────────────────────────────
     from app.services.flow_automator import GENERATION_TIMEOUT_SECONDS
 
-    hard_timeout = GENERATION_TIMEOUT_SECONDS + 60
+    # Multi-shot mode (opt-in via GENERATION_MULTI_SHOT=true): compile one prompt per
+    # shot archetype and submit each on its own, so the four images are four genuinely
+    # different photographs rather than four samples of one prompt. Falls back to the
+    # single-prompt path on any problem, because a half-built set is worse than the
+    # behaviour this job would have had before.
+    shot_requests: list = []
+    if settings.generation_multi_shot:
+        if backend not in ("auto", "flow_ui"):
+            print(f"[BG] Multi-shot mode requested but backend={backend!r} cannot submit "
+                  "one prompt per shot; using the single-prompt path.")
+        else:
+            try:
+                shot_requests = await compile_shot_requests(job_id)
+                (output_dir / "shot_prompts.json").write_text(
+                    json.dumps(
+                        [
+                            {
+                                "archetype": s.archetype,
+                                "label": s.label,
+                                "aspect_ratio": s.aspect_ratio,
+                                "prompt": s.prompt,
+                            }
+                            for s in shot_requests
+                        ],
+                        indent=2,
+                    ),
+                    encoding="utf-8",
+                )
+                print(f"[BG] Multi-shot mode: {len(shot_requests)} shot prompt(s) compiled "
+                      f"({', '.join(s.archetype for s in shot_requests)}) → shot_prompts.json")
+            except Exception as e:  # noqa: BLE001 — fall back, never lose the run
+                print(f"[BG] Multi-shot compile failed ({e}); falling back to the single prompt.")
+                shot_requests = []
+
+    per_shot = max(1, int(settings.generation_multi_shot_per_shot))
+    # A multi-shot run submits once per shot, so the ceiling has to scale with the set.
+    hard_timeout = (GENERATION_TIMEOUT_SECONDS + 60) * (len(shot_requests) or 1)
     try:
-        result = await asyncio.wait_for(
-            generate_variations(
-                prompt=prompt,
-                job_id=job_id,
-                count=count,
-                backend=backend,
-                reference_image=ref_image_path,
-                prompts=prompts,
-            ),
-            timeout=hard_timeout,
-        )
+        if shot_requests:
+            result = await asyncio.wait_for(
+                generate_shot_set(
+                    shots=shot_requests,
+                    job_id=job_id,
+                    backend=backend,
+                    reference_image=ref_image_path,
+                    count_per_shot=per_shot,
+                ),
+                timeout=hard_timeout,
+            )
+        else:
+            result = await asyncio.wait_for(
+                generate_variations(
+                    prompt=prompt,
+                    job_id=job_id,
+                    count=count,
+                    backend=backend,
+                    reference_image=ref_image_path,
+                    prompts=prompts,
+                ),
+                timeout=hard_timeout,
+            )
     except asyncio.TimeoutError:
         err_msg = f"Generation timed out after {hard_timeout}s (Playwright runner hung or took too long)."
         print(f"[BG] {err_msg}")

@@ -30,6 +30,14 @@ from app.pipeline.product_taxonomy import (
     subject_line,
 )
 from app.pipeline.prompt_modules import get_relevant_module_items, get_relevant_modules
+from app.pipeline.shot_archetypes import (
+    ARCHETYPES,
+    SHOT_ORDER,
+    crop_phrase,
+    human_for,
+    niche_slots,
+    shot_directive,
+)
 
 logger = logging.getLogger("pre.pipeline.prompt_compiler")
 
@@ -52,6 +60,76 @@ _BANNED_PATTERNS: list[tuple[str, re.Pattern[str]]] = sorted(
     ),
     key=lambda pair: -len(pair[0]),
 )
+
+
+# Internal enum tokens that must never reach the render prompt as-is.
+# The Visual DNA analyst returns snake_case enums (`high_tactile`,
+# `natural_fabric_grain`, `human_standing`); interpolating them raw produced
+# text like "with high_tactile tactile surface texture and natural_fabric_grain
+# natural manufacturing/wear imperfections", which the diffusion model reads as
+# literal gibberish instead of an instruction.
+_ENUM_PHRASES: dict[str, str] = {
+    # material_dna — these land inside "with {x} tactile surface texture" and
+    # "and {y} natural manufacturing/wear imperfections", so they must read as
+    # degrees/qualifiers, not repeat the noun that already follows them.
+    "high_tactile": "high",
+    "natural_fabric_grain": "authentic",
+    "medium": "moderate",
+    # composition_dna
+    "slightly_off_center": "slightly off-center",
+    "off_center": "off-center",
+    "rule_of_thirds": "on the rule-of-thirds line",
+    "human_standing": "at human standing height",
+    "eye_level": "at eye level",
+    "pinterest_2_3": "in a 2:3 Pinterest crop",
+    "standard": "natural",
+    # lighting_dna / camera_dna
+    "natural_smartphone": "natural smartphone",
+    "subtle_natural_chroma": "subtle natural chroma noise",
+    "warm_neutral": "warm neutral",
+    "neutral_to_cool": "neutral to cool",
+    # human_presence
+    "partial_body": "partially in frame",
+    "partial_hand_arm": "hands and forearm in frame",
+    "hands_only": "hands only in frame",
+    "full": "fully in frame",
+    # generic
+    "very_high": "very high",
+    "very_low": "very low",
+}
+
+
+def _humanize(value: Any) -> Any:
+    """Render an internal enum token as readable prompt prose.
+
+    Leaves already-prose values untouched; only rewrites snake_case tokens.
+    """
+    if not isinstance(value, str):
+        return value
+    s = value.strip()
+    if not s:
+        return value
+    if s in _ENUM_PHRASES:
+        return _ENUM_PHRASES[s]
+    if "_" in s:
+        return s.replace("_", " ")
+    return s
+
+
+# Framing is a fixed photography vocabulary — macro | tight | medium | wide.
+# It needs its own pass because `_humanize` maps the bare token "medium" to
+# "moderate" for material_dna.texture_visibility, which turned every framing
+# clause into "moderate framing". "medium framing" is the term of art.
+_FRAMING_WORDS = {"macro", "tight", "medium", "wide"}
+
+
+def _humanize_framing(value: Any) -> str:
+    """Render a framing token without the generic enum map's `medium` rewrite."""
+    s = str(value or "").strip().lower()
+    if s in _FRAMING_WORDS:
+        return s
+    human = _humanize(value)
+    return str(human).strip() or "medium"
 
 
 def _scrub(value: Any, stripped: set[str]) -> Any:
@@ -167,6 +245,9 @@ class CompileResult:
     warnings: list[CompileWarning] = field(default_factory=list)
     is_valid: bool = True
     module_keys: list[str] = field(default_factory=list)
+    shot_archetype: str | None = None
+    shot_label: str = ""
+    aspect_ratio: str = ""
 
 
 def compile_prompt(
@@ -177,10 +258,22 @@ def compile_prompt(
     trend_label: str | None = None,
     commerce_dna: dict[str, Any] | None = None,
     concept: dict[str, Any] | None = None,
+    shot_archetype: str | None = None,
 ) -> CompileResult:
     """
     Assemble a sensory, conversion-focused generation prompt.
     Validates inputs and returns compiled prompt with warnings/errors.
+
+    `shot_archetype` selects multi-shot mode. When it is None the compiler behaves
+    exactly as it always has (one prompt, six directed variation axes). When it is
+    one of SHOT_ORDER the compiler emits that archetype's own camera, framing,
+    human presence, lighting and crop, and replaces the six-axis FLOW VARIATION
+    block with that archetype's Block C directive.
+
+    Multi-shot mode exists because Flow's `count` parameter takes ONE prompt and
+    returns N stochastic samples of it — four near-identical compositions, not four
+    distinct photographs. Four distinct shots require four prompts and four
+    submissions, which is what `compile_shot_set()` produces.
     """
     warnings: list[CompileWarning] = []
     stripped: set[str] = set()
@@ -234,12 +327,54 @@ def compile_prompt(
             "No trend_label on the reference, so the prompt has no trend anchor."
         ))
 
+    # ── Shot archetype (multi-shot mode) ──────────
+    # One Flow submission takes ONE prompt and returns N stochastic samples of it,
+    # so a genuinely four-shot set needs four compiles. Each archetype takes
+    # ownership of the values that would otherwise contradict it: a flat lay cannot
+    # be "handheld at chest level", and a macro cannot carry a 2:3 crop.
+    arch = None
+    arch_slots = None
+    if shot_archetype:
+        arch = ARCHETYPES.get(str(shot_archetype).strip().lower())
+        if arch is None:
+            warnings.append(CompileWarning(
+                "error",
+                f"Unknown shot archetype {shot_archetype!r}; expected one of "
+                f"{', '.join(SHOT_ORDER)}. Cannot compile.",
+            ))
+            return CompileResult(prompt="", warnings=warnings, is_valid=False)
+
+        arch_slots = niche_slots(klass.key)
+        scene = dict(scene)  # never mutate the caller's scene
+        # `framing` is read from the scene both by this compiler and by
+        # prompt_modules (which gates the macro/closeup module set on it).
+        scene["framing"] = arch.framing
+        # `human_presence` is read from the scene by the camera block *and* by
+        # prompt_modules, which is what decides whether hand modules are eligible.
+        scene["human_presence"] = human_for(klass, arch.wants_human)
+        # The scene's own location belongs to the "world" shot; the others take the
+        # archetype's setting so two different places never appear in one prompt.
+        if arch.key in ("flat_lay", "macro"):
+            scene["location"] = "a clean, controlled setting"
+        else:
+            scene["location"] = arch_slots.setting
+        if arch.key == "flat_lay":
+            scene["surface"] = arch_slots.surface
+        elif arch.key == "macro":
+            # A 1:1 magnification frame is filled by the detail itself; naming a
+            # surface here invites the model to render that material prominently.
+            scene["surface"] = ""
+
     # ── Build Narrative Blocks ────────────────────
 
     # 1. SCENE INTENT & AUTHENTIC MOMENT
     motivation = scene["capture_motivation"].rstrip(".")
     action = scene.get("action", "").strip().rstrip(".")
     location = scene.get("location", "an authentic real-world setting").strip().rstrip(".")
+    # Scene locations are often already prepositional phrases ("in a changing
+    # room"), which rendered as "photograph taken in in a changing room".
+    if location.lower().startswith("in "):
+        location = location[3:]
     surface = scene.get("surface", "").strip().rstrip(".")
     state = scene.get("product_state", "").strip().rstrip(".")
 
@@ -250,12 +385,12 @@ def compile_prompt(
     if action:
         scene_intro += f" {action}."
     if state or surface:
-        details = []
+        bits = []
         if state:
-            details.append(f"product is {state}")
+            bits.append(state)
         if surface:
-            details.append(f"resting on {surface}")
-        scene_intro += f" Captured with the {', '.join(details)}."
+            bits.append(f"resting on {surface}")
+        scene_intro += f" In frame, the product is {', '.join(bits)}."
     if trend_label:
         scene_intro += f" Aesthetic context: subtle {trend_label} mood naturally integrated through surrounding props and styling."
 
@@ -268,8 +403,8 @@ def compile_prompt(
     prod_materials = product.get("materials", [])
 
     mat_dna = visual_dna.get("material_dna", {})
-    mat_visibility = mat_dna.get("texture_visibility", "high")
-    mat_imperfection = mat_dna.get("surface_imperfection", "moderate")
+    mat_visibility = _humanize(mat_dna.get("texture_visibility") or "high")
+    mat_imperfection = _humanize(mat_dna.get("surface_imperfection") or "moderate")
 
     product_block = f"Featuring {subject_desc}"
     if scale:
@@ -299,7 +434,11 @@ def compile_prompt(
 
     # 3. ENVIRONMENT & REAL-WORLD CLUTTER
     env_dna = visual_dna.get("environment_dna", {})
-    clutter = env_dna.get("clutter") or klass.clutter
+    clutter = _humanize(env_dna.get("clutter") or klass.clutter)
+    # A hero flat lay and a macro detail shot are deliberately clean — the clutter
+    # brief belongs to the lifestyle and environment shots, not to these two.
+    if arch is not None and arch.key in ("flat_lay", "macro"):
+        clutter = "minimal"
     bg_elements = scene.get("background_elements", [])
     
     env_block = f"Environment: {location} with {clutter} lived-in clutter and believable real-world asymmetry."
@@ -313,19 +452,40 @@ def compile_prompt(
     light_dna = visual_dna.get("lighting_dna", {})
     realism_dna = visual_dna.get("realism_markers", {})
 
-    framing = scene.get("framing") or comp_dna.get("framing") or klass.framing
-    centering = comp_dna.get("centering", "slightly off-center")
-    crop = comp_dna.get("crop") or klass.crop
-    camera_height = comp_dna.get("camera_height") or klass.camera_height
-    camera_pos = scene.get("camera_position", "handheld at chest level")
-    human = scene.get("human_presence", "none")
+    # The archetype owns the camera entirely. A flat lay cannot be "handheld at
+    # chest level" and a macro cannot carry a 2:3 crop, so in multi-shot mode these
+    # four values come from the archetype rather than from the DNA or the class.
+    if arch is not None:
+        framing = arch.framing
+        camera_height = arch.camera_height
+        camera_pos = arch.camera_pos
+        crop = crop_phrase(arch.aspect_ratio)
+    else:
+        framing = _humanize_framing(
+            scene.get("framing") or comp_dna.get("framing") or klass.framing
+        )
+        crop = _humanize(comp_dna.get("crop") or klass.crop)
+        camera_height = _humanize(comp_dna.get("camera_height") or klass.camera_height)
+        camera_pos = _humanize(scene.get("camera_position") or "handheld at chest level")
 
-    light_source = light_dna.get("source", "natural daylight")
-    contrast = light_dna.get("contrast", "natural")
-    warmth = light_dna.get("warmth", "neutral")
-    sharpness = cam_dna.get("sharpness", "natural smartphone sharpness")
-    noise = cam_dna.get("noise", "subtle sensor grain")
-    hdr = cam_dna.get("hdr", "restrained computational dynamic range")
+    centering = _humanize(comp_dna.get("centering") or "slightly off-center")
+    human = _humanize(scene.get("human_presence") or "none")
+
+    # The DNA analyst does not always honour the declared key names — 45% of
+    # stored DNA carries lighting_dna.{type,quality,color_cast} and
+    # camera_dna.{sensor_noise,dynamic_range} instead of {source,contrast,warmth}
+    # and {noise,hdr}. Reading only the declared spelling silently dropped the
+    # whole reference-specific lighting/camera brief and replaced it with the
+    # hardcoded defaults below, which is why unrelated references produced
+    # near-identical prompts. Accept both spellings.
+    light_source = _humanize(light_dna.get("source") or light_dna.get("type") or "natural daylight")
+    contrast = _humanize(light_dna.get("contrast") or light_dna.get("quality") or "natural")
+    warmth = _humanize(light_dna.get("warmth") or light_dna.get("color_cast") or "neutral")
+    sharpness = _humanize(cam_dna.get("sharpness") or "natural smartphone")
+    noise = _humanize(cam_dna.get("noise") or cam_dna.get("sensor_noise") or "subtle sensor grain")
+    hdr = _humanize(cam_dna.get("hdr") or cam_dna.get("dynamic_range") or "restrained computational dynamic range")
+    device = str(cam_dna.get("device_family") or "").strip()
+    focal = str(cam_dna.get("focal_length") or "").strip()
 
     camera_block = (
         f"Camera & Composition: Handheld modern smartphone lens, {framing} framing with a {crop} crop, "
@@ -338,18 +498,52 @@ def compile_prompt(
     palette = measured_facts.get("dominant_palette") or []
     palette_text = f" Grounded environmental tones: {', '.join(palette[:4])}." if palette else ""
 
+    optics = [x for x in (f"{sharpness} sharpness", noise, f"{hdr} dynamic range") if x]
+    # Each archetype needs its own light: a raking 45° side light for a macro and a
+    # soft overhead key for a flat lay are not the same photograph. Warmth, contrast
+    # and palette stay shared so the set still reads as one shoot — only the
+    # direction and quality of the light change from shot to shot.
+    if arch is not None:
+        light_clause = (
+            f"{arch.lighting}, holding {warmth} color balance and {contrast} contrast"
+        )
+    else:
+        light_clause = (
+            f"Authentic {light_source} lighting with {warmth} color balance "
+            f"and {contrast} contrast"
+        )
     lighting_block = (
-        f"Lighting: Authentic {light_source} lighting with {warmth} color balance and {contrast} contrast.{palette_text} "
-        f"Realistic light bounce and natural soft shadows. Optical specs: {sharpness}, {noise}, {hdr}, "
+        f"Lighting: {light_clause}.{palette_text} "
+        f"Realistic light bounce and natural soft shadows. Optical specs: {', '.join(optics)}, "
         "natural focal falloff with organic lens depth and authentic ambient falloff."
     )
 
     # 4b. FLOW VARIATION — class-specific direction from the Scene Director
     # (scene_variation_matrix, six seeded axes). Only present on scenes directed
     # after the matrix landed; older scenes skip this block with no behavior change.
+    #
+    # In multi-shot mode this block is REPLACED by the archetype's Block C, not
+    # appended to it. Keeping both would make them fight: the six axes name one
+    # camera angle and one lighting setup, while the archetype deliberately
+    # overrides both.
     var_keys = ("camera_angle", "lighting_setup", "color_grading",
                 "scene_environment", "style_aesthetic", "creative_context")
     var_lines = [f"- {k}: {scene[k]}" for k in var_keys if scene.get(k)]
+
+    shot_block = None
+    if arch is not None:
+        shot_block = shot_directive(
+            arch.key,
+            klass,
+            product,
+            locked_world={
+                "colour grading": str(scene.get("color_grading") or "").strip(),
+                "visual aesthetic": str(scene.get("style_aesthetic") or "").strip(),
+            },
+        )
+        # The aspect ratio is a Flow API parameter, but restating it keeps the
+        # prompt and the request in agreement for anyone reading the job package.
+        shot_block += f"\nFRAME: a single image at {arch.aspect_ratio} aspect ratio."
 
     # 5. ASSEMBLE SECTIONS
     sections = [
@@ -363,7 +557,9 @@ def compile_prompt(
         camera_block,
         lighting_block,
     ]
-    if var_lines:
+    if shot_block:
+        sections.append(shot_block)
+    elif var_lines:
         sections.append(
             "FLOW VARIATION — honour all six directed axes in the composition:\n"
             + "\n".join(var_lines)
@@ -417,7 +613,49 @@ def compile_prompt(
         warnings=warnings,
         is_valid=True,
         module_keys=selected_module_keys,
+        shot_archetype=arch.key if arch else None,
+        shot_label=arch.label if arch else "",
+        aspect_ratio=arch.aspect_ratio if arch else "",
     )
+
+
+def compile_shot_set(
+    visual_dna: dict[str, Any],
+    product: dict[str, Any],
+    product_truth: dict[str, Any],
+    scene: dict[str, Any],
+    trend_label: str | None = None,
+    commerce_dna: dict[str, Any] | None = None,
+    concept: dict[str, Any] | None = None,
+    archetypes: tuple[str, ...] = SHOT_ORDER,
+) -> list[CompileResult]:
+    """
+    Compile the full multi-shot set — one prompt per archetype, in submission order.
+
+    Each result is an independent prompt meant to be submitted to Flow on its own
+    with `count=1`. The product passport and the locked world are byte-identical
+    across the set (they come from the same inputs and the same scene), while the
+    camera, framing, lighting, crop and Block C directive differ per shot.
+
+    The inputs are never mutated: `compile_prompt` copies the scene before applying
+    archetype overrides, so four compiles from one scene cannot contaminate each
+    other.
+    """
+    results: list[CompileResult] = []
+    for key in archetypes:
+        results.append(
+            compile_prompt(
+                visual_dna=visual_dna,
+                product=product,
+                product_truth=product_truth,
+                scene=scene,
+                trend_label=trend_label,
+                commerce_dna=commerce_dna,
+                concept=concept,
+                shot_archetype=key,
+            )
+        )
+    return results
 
 
 def create_job_package(

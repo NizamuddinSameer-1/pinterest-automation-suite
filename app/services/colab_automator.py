@@ -341,19 +341,21 @@ async def upscale_images_via_colab(
                     files = {"file": (p.name, raw_bytes, "image/jpeg")}
                     resp = await client.post(endpoint, files=files)
                     if resp.status_code == 200 and len(resp.content) > 5000:
-                        from app.services.anti_ai_processor import postprocess_image
+                        from app.services.anti_ai_processor import finalize_upscaled_image
 
                         temp_upscaled = p.with_suffix(".colab_tmp.jpg")
                         temp_upscaled.write_bytes(resp.content)
 
-                        # Must skip_colab=True! The image was just enhanced by Colab; avoid duplicate upscaling
-                        # crop_bottom_px=0 prevents double-cropping the watermark since it was already removed
-                        postprocess_image(temp_upscaled, p, crop_bottom_px=0, skip_colab=True)
+                        # Resize and encode only. The image was already cropped
+                        # and sharpened before it was upscaled, and Real-ESRGAN's
+                        # output is already crisp — running the full pipeline here
+                        # applied the unsharp mask a second time.
+                        finalize_upscaled_image(temp_upscaled, p)
                         if temp_upscaled.is_file():
                             temp_upscaled.unlink()
 
                         size_kb = p.stat().st_size // 1024
-                        logger.info("✅ [COLAB 2K ENHANCER] Pin %d/%d successfully enhanced: '%s' (%d KB, 2K Studio Master)", idx, total_pins, p.name, size_kb)
+                        logger.info("✅ [COLAB ENHANCER] Pin %d/%d enhanced: '%s' (%d KB)", idx, total_pins, p.name, size_kb)
                         upscaled_paths.append(str(p))
                         success = True
                         success_count += 1
@@ -372,8 +374,10 @@ async def upscale_images_via_colab(
                         await asyncio.sleep(2)
 
             if not success:
-                logger.info("🛡️ [UGC FALLBACK] Enhancing Pin %d/%d locally with Optical Micro-Texture & Sensor Grain...", idx, total_pins)
+                logger.info("🛡️ [UGC FALLBACK] Pin %d/%d kept at local enhancement (GPU upscale unavailable).", idx, total_pins)
                 from app.services.anti_ai_processor import postprocess_image
+                # A no-op for images the generation path already enhanced; it
+                # only does work if this was somehow called on a raw render.
                 postprocess_image(p, skip_colab=True)
                 upscaled_paths.append(str(p))
 

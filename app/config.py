@@ -85,6 +85,20 @@ class Settings(BaseSettings):
     generation_backend: str = "auto"
     generation_variation_count: int = 4
     generation_stall_minutes: int = 30
+    # Multi-shot mode: instead of ONE prompt submitted with count=N (which returns N
+    # stochastic samples of that one prompt — four near-identical compositions), submit
+    # one prompt per shot archetype and get four genuinely distinct photographs
+    # (lifestyle / flat lay / macro / environment).
+    #
+    # Off by default because it costs N submissions instead of one, so a run takes
+    # roughly N times as long and uses N times the Flow quota. Turn it on to get the
+    # four distinct shots; turn it off to return to the previous single-prompt
+    # behaviour with no other change. Only the browser backend (flow_ui) supports it.
+    # See app/pipeline/shot_archetypes.py and docs/FLOW_4_SHOT_ARCHITECTURE.md.
+    generation_multi_shot: bool = False
+    # How many images to request per archetype. 1 is the purest four-shot set; 2 gives
+    # a spare render per shot to survive an intermittent moderation rejection.
+    generation_multi_shot_per_shot: int = 1
     # Google Flow project workspace the browser automator types into. Empty means
     # "discover the first project link on the Flow home page" — the previous code
     # had one operator's project UUID compiled into it.
@@ -99,13 +113,34 @@ class Settings(BaseSettings):
     # never cost a variation. See app/services/flow_upscale.py.
     flow_upscale_resolution: str = "2k"
     # ── Pin Upscaler & HD Post-Processing ────────
-    upscaler_target_width: int = 1080       # Full HD Pinterest Pin width (min 1080px)
-    upscaler_jpeg_quality: int = 98         # 98% Studio-grade JPEG quality
-    upscaler_subsampling: int = 0           # 0 = 4:4:4 zero chroma subsampling
-    colab_upscaler_url: str = ""            # Optional Google Colab / Cloudflare URL for Real-ESRGAN / 4x-UltraSharp
-    colab_notebook_url: str = ""            # Your Google Colab notebook shareable link (drive.google.com / colab.research.google.com)
-    ugc_grain_amount: float = 2.5           # Micro-sensor grain to break AI plastic smoothness (0 to disable, 2.5 default)
-    ugc_sharpen_percent: int = 140          # High-frequency micro-texture unsharp mask percent (fabric weave & skin pores)
+    # Every value here is read by app/services/anti_ai_processor.py. The previous
+    # set produced 3.5-4.2 MB pins carrying visible sharpening halos, and
+    # upscaler_target_width was declared but never read by anything.
+    #
+    # Target width is a *ceiling*, not a goal: images larger than this are
+    # downscaled, and images smaller than this are only upscaled when the GPU
+    # upscaler is unavailable. See _fit_width() in anti_ai_processor.
+    upscaler_target_width: int = 1080
+    # q92 at 4:2:0 is visually lossless at the sizes Pinterest actually serves.
+    # q98 at 4:4:4 roughly tripled the file size for no visible gain.
+    upscaler_jpeg_quality: int = 92
+    upscaler_subsampling: int = 2           # 2 = 4:2:0; 0 (4:4:4) is ~3x the size
+    # Fraction of the render height kept after removing the Flow sparkle. The
+    # watermark sits at y 0.912-0.946 (measured over 66 raw renders), so 0.910
+    # clears it with a small margin.
+    watermark_keep_fraction: float = 0.910
+    colab_upscaler_url: str = ""            # Colab/Cloudflare URL for the Real-ESRGAN server
+    colab_notebook_url: str = ""            # Colab notebook shareable link (colab.research.google.com)
+    # Cap the upscaler's 4x output before it crosses the tunnel. Uncapped, a
+    # 1080px input becomes 5760px and returns as ~21 MB that is immediately
+    # downscaled and discarded locally.
+    colab_max_output_px: int = 2160
+    ugc_grain_amount: float = 1.5           # Luminance-only sensor grain (0 to disable)
+    ugc_sharpen_percent: int = 60           # Luminance-only unsharp mask percent
+    ugc_sharpen_radius: float = 1.0
+    # Threshold suppresses sharpening where local contrast is below it. This is
+    # what keeps flat colour flat; the old value of 1 sharpened every pixel.
+    ugc_sharpen_threshold: int = 3
     # Board used when the SEO stage suggests none. This was hardcoded as a literal
     # in the publisher, both generation paths and the batch upload route, so
     # changing boards meant editing four files.

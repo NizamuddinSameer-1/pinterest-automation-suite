@@ -33,6 +33,7 @@ were tried and why each one declined — the point being that no caller can mist
 from __future__ import annotations
 
 import importlib.util
+import json
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path, PureWindowsPath
@@ -431,3 +432,174 @@ async def generate_variations(
         return result
 
     raise GenerationFailed(f"No generation backend produced images for job {job_id}.", attempts)
+
+
+# ── multi-shot mode ─────────────────────────────────────────────────────
+
+
+async def compile_shot_requests(job_id: str) -> list:
+    """
+    Build the four-shot plan for a job from its stored scene, DNA and product.
+
+    Reads the same rows `POST /api/jobs/{job_id}/compile` reads, and passes the same
+    commerce DNA and first concept, so each shot prompt is the single-prompt brief
+    this job would otherwise have produced — plus that archetype's own camera,
+    framing, lighting and Block C directive.
+
+    Raises `GenerationFailed` when the job lacks the inputs, so the caller can fall
+    back to single-prompt mode rather than submit a half-built set.
+    """
+    from app.database import async_session
+    from app.models.models import Job, Product, Reference, VisualDNA
+    from app.pipeline.prompt_compiler import compile_shot_set
+    from app.services.flow_automator import ShotRequest
+
+    async with async_session() as db:
+        job = await db.get(Job, job_id)
+        if not job:
+            raise GenerationFailed(f"job {job_id} not found.")
+        if not job.scene_json:
+            raise GenerationFailed(f"job {job_id} has no scene; direct one first.")
+        if not job.visual_dna_id:
+            raise GenerationFailed(f"job {job_id} has no Visual DNA.")
+
+        dna_row = await db.get(VisualDNA, job.visual_dna_id)
+        product_row = await db.get(Product, job.product_id)
+        ref_row = await db.get(Reference, job.reference_id)
+        if not dna_row or not product_row:
+            raise GenerationFailed(f"job {job_id} is missing its DNA or product row.")
+
+        # Reuse the compile endpoint's own product mapping so the shot set cannot
+        # drift from the single-prompt path. Imported lazily: app.api.jobs pulls in
+        # the pipeline modules, and this service must stay importable without them.
+        from app.api.jobs import _product_to_dict
+
+        dna = json.loads(dna_row.dna_json)
+        product = _product_to_dict(product_row)
+        product_truth = (
+            json.loads(product_row.product_truth_json)
+            if product_row.product_truth_json
+            else {
+                "must_preserve": product.get("key_attributes", []),
+                "must_not_invent": [],
+                "allowed_scene_variations": [],
+            }
+        )
+        scene = json.loads(job.scene_json)
+        commerce_dna = json.loads(job.commerce_dna_json) if job.commerce_dna_json else None
+        concepts = json.loads(job.concepts_json) if job.concepts_json else []
+        first_concept = concepts[0] if concepts else None
+
+    results = compile_shot_set(
+        visual_dna=dna,
+        product=product,
+        product_truth=product_truth,
+        scene=scene,
+        trend_label=ref_row.trend_label if ref_row else None,
+        commerce_dna=commerce_dna,
+        concept=first_concept,
+    )
+    bad = [r.shot_archetype for r in results if not r.is_valid]
+    if bad:
+        raise GenerationFailed(
+            f"shot compilation failed for {', '.join(bad)}; refusing a partial set."
+        )
+    return [
+        ShotRequest(
+            archetype=r.shot_archetype or "",
+            prompt=r.prompt,
+            label=r.shot_label,
+            aspect_ratio=r.aspect_ratio or None,
+        )
+        for r in results
+    ]
+
+
+async def generate_shot_set(
+    shots: list,
+    job_id: str,
+    backend: str = AUTO,
+    reference_image: str | Path | None = None,
+    count_per_shot: int = 1,
+) -> GenerationResult:
+    """
+    Generate a multi-shot set — one genuinely distinct photograph per archetype.
+
+    Only the browser backend can do this. `flow_api` replays one captured request and
+    `pollinations` takes one prompt; neither has a multi-submit runner. When the
+    requested backend is something else this raises `GenerationUnavailable` instead of
+    quietly submitting four samples of one prompt, because that silent substitution is
+    the exact failure multi-shot mode exists to remove.
+
+    Partial success counts as success: three usable shots out of four are returned and
+    recorded, and the failed shot is named in `attempts`. Losing the whole set because
+    one render was rejected would be the worse outcome.
+    """
+    if not shots:
+        raise GenerationFailed("refusing to generate with no shots.")
+    if backend not in (AUTO, FLOW_UI):
+        raise GenerationUnavailable(
+            f"multi-shot mode needs the browser backend ({FLOW_UI}); {backend!r} can only "
+            "submit a single prompt and would return N samples of it."
+        )
+    if not _playwright_installed():
+        raise GenerationUnavailable(
+            "playwright is not installed in this environment "
+            "(pip install -r requirements.txt && python -m playwright install chromium)"
+        )
+    if not FLOW_PROFILE_DIR.exists():
+        raise GenerationUnavailable(
+            "no logged-in Google Flow browser profile (data/flow_profile). "
+            "Run the one-time Flow login first."
+        )
+
+    from app.services.flow_automator import generate_flow_shots_automated
+
+    per_shot = max(1, int(count_per_shot))
+    logger.info(
+        "Job %s: multi-shot run — %d shot(s), %d image(s) each",
+        job_id, len(shots), per_shot,
+    )
+
+    results = await generate_flow_shots_automated(
+        job_id=job_id,
+        shots=shots,
+        reference_image=reference_image,
+        count_per_shot=per_shot,
+    )
+
+    produced: list[str] = []
+    attempts: list[str] = []
+    for r in results:
+        if r.ok:
+            produced.extend(r.saved)
+        else:
+            attempts.append(f"{r.archetype}: failed — {r.error}")
+
+    kept, rejected = _verify_produced(produced, "flow_ui (multi-shot)")
+    if rejected:
+        attempts.append(
+            f"flow_ui (multi-shot): dropped {len(rejected)} unusable path(s): {'; '.join(rejected)}"
+        )
+    if not kept:
+        raise GenerationFailed(
+            f"No shot in the set produced a usable image for job {job_id}.", attempts
+        )
+
+    result = GenerationResult(
+        image_paths=kept,
+        produced_by="flow_ui (multi-shot)",
+        requested_count=len(shots) * per_shot,
+        attempts=attempts,
+    )
+    if result.is_partial:
+        logger.warning(
+            "Job %s: multi-shot produced %d of %d requested image(s) across %d shot(s)",
+            job_id, result.count, result.requested_count, len(shots),
+        )
+    else:
+        logger.info(
+            "Job %s: multi-shot produced all %d image(s) across %d shot(s)",
+            job_id, result.count, len(shots),
+        )
+    return result

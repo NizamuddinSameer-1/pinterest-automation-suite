@@ -1,9 +1,19 @@
 # ==============================================================================
-# 🚀 PINTEREST REALISM ENGINE — 2K UGC PHOTOREALISM AI UPSCALER (GOOGLE COLAB)
+# 🚀 PINTEREST REALISM ENGINE — UGC PHOTOREALISM AI UPSCALER (GOOGLE COLAB)
 # ==============================================================================
-# Model: 4x-UltraSharp (Fine-Tuned for UGC Realism, Fabric Weave & Skin Pores)
-# Architecture: Tiled inference (tile_size=384) with 0 CUDA OOM errors on T4 GPU.
-# Output Standard: 2K Quality Master (max width 1440px / 1080px Pinterest Full HD).
+# Model: 4x-UltraSharp (fine-tuned for UGC realism, fabric weave and skin pores)
+# Architecture: tiled inference, 0 CUDA OOM errors on a T4 GPU.
+#
+# Tuning notes — see the constants below:
+#   * The model is 4x, so a large input is expensive. The input is capped at
+#     PRE_MODEL_INPUT_MAX (default 768). The old code fed it the full 1440px
+#     pin, ran 49.5 MP of super-resolution over 70 tiles, and then downscaled
+#     the result straight back to 1440px — the size it started at. Capping the
+#     input cuts the tiled work about 6x and returns a better image, because
+#     the model now works from the render instead of from a sharpened copy.
+#   * The output is capped at PRE_MAX_OUTPUT_PX (default 2160) and encoded
+#     q92 4:2:0. The client resizes to its own pin width, so the old q98 4:4:4
+#     encode was a 3.8 MB transfer carrying detail that was thrown away.
 #
 # 1. Run this entire cell in Google Colab with T4 GPU enabled.
 #    (Runtime -> Change runtime type -> T4 GPU -> Save)
@@ -56,6 +66,20 @@ if device.type == "cuda":
     upscale_model = upscale_model.half()  # 16-bit half precision for 2x faster GPU inference!
 
 print("✅ 4x-UltraSharp Photorealism Model loaded into GPU VRAM successfully!")
+
+# --- Tunables ---------------------------------------------------------------
+#: Longest edge handed to the model. The model multiplies pixel count by 16,
+#: so this is the single biggest lever on how long a pin takes.
+MODEL_INPUT_MAX = int(os.environ.get("PRE_MODEL_INPUT_MAX", "768"))
+#: Longest edge returned to the client. The client resizes to its own pin
+#: width, so anything above that is transfer cost for nothing.
+MAX_OUTPUT_PX = int(os.environ.get("PRE_MAX_OUTPUT_PX", "2160"))
+#: Tiled inference geometry. Fewer, larger tiles means less overlap waste and
+#: fewer kernel launches. 384px tiles peak well under 2 GB on a T4.
+TILE_SIZE = int(os.environ.get("PRE_TILE_SIZE", "384"))
+TILE_OVERLAP = int(os.environ.get("PRE_TILE_OVERLAP", "32"))
+JPEG_QUALITY = int(os.environ.get("PRE_JPEG_QUALITY", "92"))
+JPEG_SUBSAMPLING = int(os.environ.get("PRE_JPEG_SUBSAMPLING", "2"))
 
 
 import gc
@@ -141,7 +165,7 @@ def health_check():
 
 @app.post("/upscale")
 async def upscale_endpoint(file: UploadFile = File(...)):
-    """Receives 1 image at a time, runs tiled 4x-UltraSharp, clears all VRAM, returns 2K JPEG."""
+    """Receives one image, runs tiled 4x-UltraSharp, clears VRAM, returns a JPEG."""
     global ENHANCED_COUNTER
     t_start = time.time()
     ENHANCED_COUNTER += 1
@@ -157,33 +181,50 @@ async def upscale_endpoint(file: UploadFile = File(...)):
         in_w, in_h = input_image.size
         print(f"\n📥 [PIN #{ENHANCED_COUNTER}] Enhancing '{filename}' ({in_w}x{in_h}, {len(raw_bytes)//1024} KB)...")
 
-        # Step B: Pre-process to tensor
+        # Step B: Cap the model input. The model multiplies the pixel count by
+        # 16, so this is what keeps a pin from taking tens of seconds.
+        w, h = input_image.size
+        if max(w, h) > MODEL_INPUT_MAX:
+            scale = MODEL_INPUT_MAX / max(w, h)
+            input_image = input_image.resize(
+                (max(1, round(w * scale)), max(1, round(h * scale))),
+                Image.Resampling.LANCZOS,
+            )
+            print(f"   ↳ input resized to {input_image.size} for inference")
+
+        # Step C: Pre-process to tensor
         tensor = TF.to_tensor(input_image).unsqueeze(0).to(device)
         if device.type == "cuda":
             tensor = tensor.half()
 
-        # Step C: Run Tiled 4x-UltraSharp (256px micro-tiles, 0 OOM errors)
-        output_tensor = predict_tiled(upscale_model, tensor, tile_size=256, overlap=24, scale=4, dev=device)
+        # Step D: Tiled 4x inference
+        output_tensor = predict_tiled(
+            upscale_model, tensor, tile_size=TILE_SIZE, overlap=TILE_OVERLAP,
+            scale=4, dev=device,
+        )
 
-        # Step D: Convert back to PIL
         output_image = TF.to_pil_image(output_tensor.squeeze(0).float().cpu())
         del tensor, output_tensor
 
-        # Step E: Standardize strictly to 2K Quality Master (Max 1440px width / 2560px height)
-        MAX_2K_WIDTH = 1440
-        MAX_2K_HEIGHT = 2560
+        # Step E: Cap the output. The client resizes down to its own pin width,
+        # so anything beyond this is transfer cost for no visible gain.
         w, h = output_image.size
-        if w > MAX_2K_WIDTH or h > MAX_2K_HEIGHT:
-            scale = min(MAX_2K_WIDTH / w, MAX_2K_HEIGHT / h)
-            new_w = int(w * scale)
-            new_h = int(h * scale)
-            output_image = output_image.resize((new_w, new_h), Image.Resampling.LANCZOS)
+        if max(w, h) > MAX_OUTPUT_PX:
+            scale = MAX_OUTPUT_PX / max(w, h)
+            output_image = output_image.resize(
+                (max(1, round(w * scale)), max(1, round(h * scale))),
+                Image.Resampling.LANCZOS,
+            )
 
         out_w, out_h = output_image.size
 
-        # Step F: Save as Studio 2K Master (98% quality, zero chroma subsampling)
+        # Step F: Encode. q92 4:2:0 is ~1.1 MB where q98 4:4:4 was ~3.8 MB, for
+        # an image that gets downscaled again on arrival.
         output_buf = io.BytesIO()
-        output_image.save(output_buf, format="JPEG", quality=98, subsampling=0, optimize=True)
+        output_image.save(
+            output_buf, format="JPEG", quality=JPEG_QUALITY,
+            subsampling=JPEG_SUBSAMPLING, optimize=False,
+        )
         out_bytes = output_buf.getvalue()
         del output_image, output_buf
 
@@ -193,9 +234,9 @@ async def upscale_endpoint(file: UploadFile = File(...)):
         elapsed = time.time() - t_start
         vram_free = torch.cuda.mem_get_info()[0] / (1024**3) if torch.cuda.is_available() else 0
         vram_total = torch.cuda.mem_get_info()[1] / (1024**3) if torch.cuda.is_available() else 0
-        print(f"   ⚡ Processed in {elapsed:.1f}s | Output: {out_w}x{out_h} (2K Master)")
+        print(f"   ⚡ Processed in {elapsed:.1f}s | Output: {out_w}x{out_h}")
         print(f"   🧹 VRAM Purged: {vram_free:.1f} GB / {vram_total:.1f} GB Free | Memory 100% Clean!")
-        print(f"   ✅ [PIN #{ENHANCED_COUNTER}] 2K Quality Ready ({len(out_bytes)//1024} KB) — Sent to Local App")
+        print(f"   ✅ [PIN #{ENHANCED_COUNTER}] Ready ({len(out_bytes)//1024} KB) — Sent to Local App")
 
         return Response(content=out_bytes, media_type="image/jpeg")
 

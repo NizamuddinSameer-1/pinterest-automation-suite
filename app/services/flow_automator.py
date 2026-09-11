@@ -43,6 +43,7 @@ import json
 import logging
 import sys
 import time
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -1346,6 +1347,7 @@ async def _save_harvest(
     canvas_urls: list[str] | None = None,
     canvas_baseline_ids: set[str] | None = None,
     upscaler: Any = None,
+    filename_prefix: str = "flow_var_",
 ) -> tuple[list[str], list[str]]:
     """
     Write up to `count` images from `harvest` and live canvas to `data/outputs/<job_id>/`.
@@ -1356,6 +1358,10 @@ async def _save_harvest(
     renders), then structured variation records, then raw harvest URLs. If any source
     fails (e.g. 403 on internal CDN URLs), it continues to alternative sources and performs
     live canvas recovery so all variations are saved.
+
+    `filename_prefix` names the files `<prefix><index>.jpg`. The single-prompt path keeps
+    the historical `flow_var_` default; the multi-shot runner passes `shot_<n>_<archetype>_`
+    so a four-shot set lands as four distinguishable files instead of overwriting one.
     """
     saved: list[str] = []
     problems: list[str] = []
@@ -1423,7 +1429,7 @@ async def _save_harvest(
         if not body:
             problems.append(f"variation #{index}: {kind} source could not be retrieved")
             continue
-        out_path = output_dir / f"flow_var_{index}.jpg"
+        out_path = output_dir / f"{filename_prefix}{index}.jpg"
         out_path.write_bytes(body)
         try:
             from app.services.anti_ai_processor import postprocess_image
@@ -1454,7 +1460,7 @@ async def _save_harvest(
                         body = await _fetch_media(page, u)
                         if body:
                             index = len(saved) + 1
-                            out_path = output_dir / f"flow_var_{index}.jpg"
+                            out_path = output_dir / f"{filename_prefix}{index}.jpg"
                             out_path.write_bytes(body)
                             try:
                                 from app.services.anti_ai_processor import postprocess_image
@@ -1470,6 +1476,111 @@ async def _save_harvest(
 
 
 # ── the run ─────────────────────────────────────────────────────────────
+
+
+async def _resolve_reference_image(
+    job_id: str, reference_image: str | Path | None
+) -> Path | None:
+    """
+    The style reference to paste into Flow, or None for a text-only run.
+
+    Resolution order — explicit argument, `ref_image_path.txt` beside the outputs,
+    the job package's `REFERENCE_STYLE.*`, then the job's row in the DB.
+    """
+    ref_image_path: Path | None = (
+        Path(reference_image).resolve()
+        if reference_image and Path(reference_image).exists()
+        else None
+    )
+    output_dir = Path(f"./data/outputs/{job_id}").resolve()
+    if not ref_image_path or not ref_image_path.exists():
+        ref_file = output_dir / "ref_image_path.txt"
+        if ref_file.exists():
+            cand = Path(ref_file.read_text(encoding="utf-8").strip()).resolve()
+            if cand.exists():
+                ref_image_path = cand
+    if not ref_image_path or not ref_image_path.exists():
+        # Try data/jobs/<job_id>/REFERENCE_STYLE.*
+        for ext in (".png", ".jpg", ".jpeg", ".webp"):
+            cand = Path(f"./data/jobs/{job_id}/REFERENCE_STYLE{ext}").resolve()
+            if cand.exists():
+                ref_image_path = cand
+                break
+    if (not ref_image_path or not ref_image_path.exists()) and job_id:
+        # Try DB: load job's reference image path
+        try:
+            from app.database import async_session as _sess
+            from app.models.models import Job, Reference
+
+            async with _sess() as db:
+                j = await db.get(Job, job_id)
+                if j and j.reference_id:
+                    r = await db.get(Reference, j.reference_id)
+                    if r and r.image_path and Path(r.image_path).exists():
+                        ref_image_path = Path(r.image_path).resolve()
+        except Exception as e:
+            logger.warning("Could not query reference image for job %s from DB: %s", job_id, e)
+
+    if ref_image_path and ref_image_path.exists():
+        print(f"🖼️ [FLOW AUTOMATOR] Reference image for job {job_id}: {ref_image_path} ({ref_image_path.stat().st_size//1024} KB)")
+        return ref_image_path
+    print(f"ℹ️ [FLOW AUTOMATOR] No reference image found for job {job_id} — running prompt-only (fallback)")
+    return None
+
+
+async def _launch_flow_context(p):
+    """
+    Launch the persistent, logged-in Flow Chromium profile. The caller closes it.
+
+    Three attempts, because a stale profile lock from a killed run is the single
+    most common launch failure and clearing the locks usually fixes it.
+    """
+    ctx = None
+    for attempt in range(3):
+        # Clean stale Chromium profile locks
+        for lock in ["SingletonLock", "SingletonCookie", "SingletonSocket", "lockfile"]:
+            lock_file = PROFILE_DIR / lock
+            if lock_file.exists():
+                try:
+                    lock_file.unlink()
+                except Exception:
+                    pass
+
+        try:
+            ctx = await p.chromium.launch_persistent_context(
+                user_data_dir=str(PROFILE_DIR),
+                headless=False,
+                no_viewport=True,
+                args=["--disable-blink-features=AutomationControlled", "--start-maximized"],
+            )
+            break
+        except Exception as e:
+            print(f"⚠️ [FLOW AUTOMATOR] Launch attempt {attempt + 1} failed: {e}. Cleaning...")
+            _kill_stale_flow_chrome()
+            await asyncio.sleep(2)
+
+    if not ctx:
+        raise RuntimeError("Failed to launch Google Flow browser after 3 attempts due to profile lock.")
+    return ctx
+
+
+async def _acquire_flow_page(ctx, job_id: str):
+    """
+    The Flow profile's first page, sitting on this job's project workspace.
+
+    Configuration first (settings.flow_project_url / FLOW_PROJECT_URL in .env), then
+    the workspace that worked last time, then discovery, then creation — see
+    `_open_project`. Every failure path hands the browser back before raising, or the
+    next run spends its first two attempts clearing a profile lock.
+    """
+    page = ctx.pages[0] if ctx.pages else await ctx.new_page()
+    try:
+        project_url = await _open_project(page, job_id)
+    except (FlowGenerationError, PlaywrightError):
+        await _close_quietly(ctx)
+        raise
+    print(f"📂 [FLOW AUTOMATOR] Workspace: {project_url}")
+    return page, project_url
 
 
 async def generate_flow_batch(prompt: str, job_id: str, count: int = 4, reference_image: str | Path | None = None) -> list[str]:
@@ -1508,6 +1619,345 @@ def _attribution_diagnostics(watcher: _GenerationWatcher) -> str:
     return " | ".join(lines)
 
 
+@dataclass
+class _WaitOutcome:
+    """What one submit produced, plus the timing the caller reports on failure."""
+
+    canvas_new_urls: list[str]
+    first_media_at: float | None
+    total_found: int
+    elapsed: float
+
+
+async def _wait_for_generation(
+    page,
+    watcher: _GenerationWatcher,
+    count: int,
+    canvas_baseline_ids: set[str],
+    clicked: str,
+) -> _WaitOutcome:
+    """
+    Wait for Flow to answer ONE submit, then hand back what it named.
+
+    Extracted from the single-prompt path so the multi-shot runner can run it once
+    per shot. It polls two independent sources — the watcher's network harvest and
+    newly mounted canvas cards — because either can be the only one to see a render.
+
+    Four exit conditions, all deliberate:
+
+    * all `count` variations are on the canvas — nothing left to wait for;
+    * the network named all `count` — then a short grace period for the cards to
+      mount, because the download prefers canvas bytes;
+    * Flow answered with fewer than `count` — a 35s grace window, then work with
+      what it actually sent rather than burning the full timeout;
+    * no generation request left the browser and the submit was not confirmed by
+      the prompt bar clearing — stop early and let the caller raise a diagnostic
+      that can tell "never submitted" from "unrecognised endpoint".
+
+    The canvas is not polled for the first 10s: Flow renders take at least 15-20s,
+    so anything mounting sooner is a pre-existing card hydrating late.
+    """
+    deadline = asyncio.get_event_loop().time() + GENERATION_TIMEOUT_SECONDS
+    started_at = asyncio.get_event_loop().time()
+    first_media_at: float | None = None
+    all_network_at: float | None = None
+    canvas_new_urls: list[str] = []
+    tick = 0
+    while asyncio.get_event_loop().time() < deadline:
+        await asyncio.sleep(1.5)
+        tick += 1
+        now = asyncio.get_event_loop().time()
+        elapsed_s = now - started_at
+
+        # Dual-layer check: poll canvas for newly appeared generated images.
+        # Google Flow renders take at least 15-20s. We do NOT poll canvas in the
+        # first 10s to guarantee no late-hydrating existing cards are captured as "new".
+        if elapsed_s >= 10:
+            current_canvas = await _get_canvas_media_urls(page)
+            new_on_canvas = [u for u in current_canvas if media_identifier(u) not in canvas_baseline_ids]
+            for u in new_on_canvas:
+                ident = media_identifier(u)
+                existing_ids = {media_identifier(existing) for existing in canvas_new_urls}
+                if ident not in existing_ids:
+                    canvas_new_urls.append(u)
+                    print(f"🖼️ [FLOW AUTOMATOR] Captured newly generated canvas variation: {u[:70]}...")
+
+        total_found = max(watcher.harvest.total, len(canvas_new_urls))
+        if total_found and first_media_at is None:
+            first_media_at = now
+
+        # If all requested variations are confirmed on the canvas, proceed immediately!
+        if len(canvas_new_urls) >= count:
+            print(f"✅ [FLOW AUTOMATOR] All {count} requested variations verified on canvas!")
+            break
+
+        # If network captured all requested variations, wait up to 15s for the canvas cards to finish mounting
+        if watcher.harvest.total >= count:
+            if all_network_at is None:
+                all_network_at = now
+                print(f"📡 [FLOW AUTOMATOR] All {count} network responses received ({len(canvas_new_urls)}/{count} on canvas). Waiting for cards to mount...")
+            if len(canvas_new_urls) >= count or (now - all_network_at > 15):
+                break
+
+        # Flow answered, but with fewer than requested. Give the remaining
+        # responses a grace window, then work with what it actually sent
+        # rather than waiting out the full timeout.
+        if first_media_at is not None and now - first_media_at > 35:
+            print(f"ℹ️ [FLOW AUTOMATOR] Flow named {total_found} of {count} "
+                  "media in the grace window; proceeding with those.")
+            break
+        # No generation request at all after a generous window means the submit
+        # was accepted by the page but Flow never asked its backend to render.
+        # Only give up if neither request was sent nor submit was confirmed by prompt clear.
+        if (not watcher.generation_requests and not total_found
+                and "confirmed by prompt bar cleared" not in clicked
+                and now - started_at > NO_REQUEST_GIVE_UP_SECONDS):
+            print("⚠️ [FLOW AUTOMATOR] No generation request left the browser in "
+                  f"{NO_REQUEST_GIVE_UP_SECONDS:.0f}s — not waiting out the timeout.")
+            break
+
+        if tick % 7 == 0:
+            progress = await _safe_eval(page, """
+                () => {
+                    const text = document.body ? document.body.innerText : '';
+                    const match = text.match(/(\\d{1,3})\\s?%/);
+                    return match ? match[1] : null;
+                }
+            """, what="poll render progress")
+            elapsed = int(GENERATION_TIMEOUT_SECONDS - (deadline - now))
+            print(f"⏳ [FLOW AUTOMATOR] {elapsed}s elapsed"
+                  + (f", Flow reports {progress}%" if progress else "")
+                  + f", {total_found} media named so far ({len(canvas_new_urls)} on canvas)...")
+
+    return _WaitOutcome(
+        canvas_new_urls=canvas_new_urls,
+        first_media_at=first_media_at,
+        total_found=max(watcher.harvest.total, len(canvas_new_urls)),
+        elapsed=asyncio.get_event_loop().time() - started_at,
+    )
+
+
+def _build_upscaler(page, watcher: _GenerationWatcher):
+    """
+    A callable turning a mediaGenerationId into print-resolution bytes, or None.
+
+    The upsample endpoint is sibling to the generation endpoint and accepts the same
+    OAuth header, which the watcher captured from the generation request.
+    `page.request` adds the profile's cookies. Any failure falls back to the
+    render-resolution bytes — an upsample must never cost a variation.
+    """
+    resolution = (getattr(settings, "flow_upscale_resolution", "2k") or "none").strip().lower()
+    if resolution not in ("2k", "4k") or not watcher.variations:
+        return None
+    if not (watcher.request_headers and watcher.api_base):
+        print("ℹ️ [FLOW AUTOMATOR] Upsampling requested but the generation request's "
+              "auth was not captured; using render-resolution bytes.")
+        return None
+
+    from app.services.flow_upscale import (
+        UPSCALE_TIMEOUT_MS,
+        media_id_candidates,
+        upscale_to_bytes,
+    )
+
+    auth = watcher.request_headers.get("authorization", "")
+    api_base = watcher.api_base
+    project_id = watcher.project_id
+
+    async def _execute(url: str, payload: dict) -> Any:
+        resp = await page.request.post(
+            url,
+            data=payload,
+            headers={"authorization": auth, "content-type": "application/json"},
+            timeout=UPSCALE_TIMEOUT_MS,
+        )
+        if resp.status != 200:
+            snippet = ""
+            with contextlib.suppress(Exception):
+                snippet = (await resp.text())[:300]
+            raise RuntimeError(f"HTTP {resp.status}: {snippet or '(no body)'}")
+        return await resp.json()
+
+    async def upscaler(media_id: str) -> bytes | None:
+        candidates = media_id_candidates(media_id)
+        for attempt, candidate in enumerate(candidates, 1):
+            body = await upscale_to_bytes(
+                _execute, api_base, candidate,
+                resolution=resolution, project_id=project_id,
+                on_failure=lambda m: print(f"⚠️ [FLOW AUTOMATOR] {m}"),
+            )
+            if body is not None:
+                if candidate != media_id:
+                    print("✅ [FLOW AUTOMATOR] Upsampler accepted the bare id segment.")
+                return body
+            if attempt < len(candidates):
+                print("⏳ [FLOW AUTOMATOR] Retrying upsample with the alternate id form...")
+                await asyncio.sleep(6)
+        return None
+
+    print(f"🔼 [FLOW AUTOMATOR] 2K upsampling enabled ({resolution.upper()}) — "
+          "requesting print-resolution bytes from Flow's upsampler.")
+    return upscaler
+
+
+@dataclass
+class ShotRequest:
+    """One prompt to submit on its own, plus what the shot is for."""
+
+    archetype: str
+    prompt: str
+    label: str = ""
+    aspect_ratio: str | None = None
+
+
+@dataclass
+class ShotResult:
+    """What one shot produced. `error` is set only when nothing was saved."""
+
+    archetype: str
+    label: str
+    saved: list[str]
+    error: str | None = None
+
+    @property
+    def ok(self) -> bool:
+        return bool(self.saved)
+
+
+async def generate_flow_shots_automated(
+    job_id: str,
+    shots: list[ShotRequest],
+    reference_image: str | Path | None = None,
+    *,
+    count_per_shot: int = 1,
+) -> list[ShotResult]:
+    """
+    Generate a multi-shot set: one serial submission per shot, one browser session.
+
+    Why not one submission with `count=len(shots)`? Flow's `count` returns N
+    stochastic samples of the SAME prompt string — the sampler converges on one
+    reading and jitters around it, which is exactly the "four slightly different
+    camera angles of one scene" problem. There is no diversity control in Flow's
+    image API; composition, camera angle and lighting are settable only through
+    prompt text. So N genuinely distinct photographs need N prompts and N submits.
+
+    The shots are serialised deliberately. Flow's project canvas is a single shared
+    surface, and two concurrent submits would race on the same baseline snapshot —
+    attribution would become ambiguous exactly where the single-prompt path went to
+    great lengths to make it unambiguous.
+
+    A fresh `_GenerationWatcher` is created per shot, so shot 2's harvest can never
+    contain shot 1's media. A shot that fails is recorded and the run continues: one
+    moderation rejection should not cost the other three shots.
+
+    Files land as `data/outputs/<job_id>/shot_<n>_<archetype>_<k>.jpg`.
+
+    Returns one `ShotResult` per requested shot, in the order given.
+    """
+    if not shots:
+        raise ValueError("refusing to drive Google Flow with no shots")
+    for shot in shots:
+        if not shot.prompt or not shot.prompt.strip():
+            raise ValueError(f"shot {shot.archetype!r} has an empty prompt")
+
+    output_dir = Path(f"./data/outputs/{job_id}").resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    ref_image_path = await _resolve_reference_image(job_id, reference_image)
+
+    print(f"\n⚡ [FLOW AUTOMATOR] Multi-shot run for Job {job_id}: {len(shots)} shot(s) "
+          f"({', '.join(s.archetype for s in shots)}), {count_per_shot} image(s) each.")
+    print("ℹ️ [FLOW AUTOMATOR] Each shot is its own submission — Flow's `count` returns N "
+          "samples of ONE prompt, so distinct shots require distinct submits.")
+
+    results: list[ShotResult] = []
+
+    async with async_playwright() as p:
+        ctx = await _launch_flow_context(p)
+        page, project_url = await _acquire_flow_page(ctx, job_id)
+
+        for n, shot in enumerate(shots, 1):
+            print(f"\n─── shot {n}/{len(shots)} — {shot.archetype} "
+                  f"({shot.label or 'unnamed'}) " + "─" * 18)
+            print(f"📝 Prompt: {shot.prompt[:120]}...")
+
+            # A fresh watcher per shot: attribution state must not carry over.
+            watcher = _GenerationWatcher(page)
+            watcher.attach()
+
+            try:
+                try:
+                    box, flat = await _enter_prompt(
+                        page, shot.prompt, reference_image=ref_image_path
+                    )
+                except (FlowGenerationError, PlaywrightError) as e:
+                    watcher.detach()
+                    results.append(ShotResult(shot.archetype, shot.label, [], f"prompt entry failed: {e}"))
+                    continue
+
+                # Baseline the canvas right before this shot's submit, so cards from
+                # earlier shots in this same run are never mistaken for this one's.
+                canvas_baseline_ids = {
+                    media_identifier(u) for u in await _get_canvas_media_urls(page)
+                }
+                print(f"ℹ️ [FLOW AUTOMATOR] Baseline: {len(canvas_baseline_ids)} existing media id(s) on canvas.")
+
+                watcher.arm()
+                try:
+                    clicked = await _submit_prompt(page, box, watcher, len(_norm(flat)))
+                except (FlowGenerationError, PlaywrightError) as e:
+                    watcher.detach()
+                    results.append(ShotResult(shot.archetype, shot.label, [], f"submit failed: {e}"))
+                    continue
+                print(f"⚡ [FLOW AUTOMATOR] Submitted via {clicked}")
+
+                outcome = await _wait_for_generation(
+                    page, watcher, count_per_shot, canvas_baseline_ids, clicked
+                )
+                await watcher.drain()
+                watcher.detach()
+
+                if not outcome.total_found:
+                    results.append(ShotResult(
+                        shot.archetype, shot.label, [],
+                        f"Flow returned no media in {int(outcome.elapsed)}s. "
+                        f"Diagnostics — {_attribution_diagnostics(watcher)}",
+                    ))
+                    continue
+
+                saved, problems = await _save_harvest(
+                    page, watcher.harvest, output_dir, job_id, count_per_shot,
+                    variations=watcher.variations or None,
+                    canvas_urls=outcome.canvas_new_urls or None,
+                    canvas_baseline_ids=canvas_baseline_ids,
+                    upscaler=_build_upscaler(page, watcher),
+                    filename_prefix=f"shot_{n}_{shot.archetype}_",
+                )
+                results.append(ShotResult(
+                    shot.archetype, shot.label, saved,
+                    None if saved else ("; ".join(problems) or "nothing could be saved"),
+                ))
+            except Exception as e:  # noqa: BLE001 — one bad shot must not abandon the set
+                watcher.detach()
+                logger.exception("Shot %s failed for job %s", shot.archetype, job_id)
+                results.append(
+                    ShotResult(shot.archetype, shot.label, [], f"{type(e).__name__}: {e}")
+                )
+
+        await _close_quietly(ctx)
+
+    produced = [r for r in results if r.ok]
+    print(f"\n🎉 [FLOW AUTOMATOR] Multi-shot run finished for Job {job_id}: "
+          f"{len(produced)}/{len(shots)} shot(s) produced images "
+          f"({sum(len(r.saved) for r in results)} file(s) total).")
+    for r in results:
+        if r.ok:
+            print(f"  ✅ {r.archetype:12} {', '.join(Path(s).name for s in r.saved)}")
+        else:
+            print(f"  ❌ {r.archetype:12} {r.error}")
+
+    return results
+
+
 async def generate_flow_batch_automated(job_id: str, prompt: str, count: int = 4, reference_image: str | Path | None = None) -> list[str]:
     """
     Generate `count` variations in Google Flow and download exactly those.
@@ -1528,87 +1978,16 @@ async def generate_flow_batch_automated(job_id: str, prompt: str, count: int = 4
     output_dir = Path(f"./data/outputs/{job_id}").resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Resolve reference image if not explicitly passed — try ref_image_path.txt, job package, then DB
-    ref_image_path: Path | None = Path(reference_image).resolve() if reference_image and Path(reference_image).exists() else None
-    if not ref_image_path or not ref_image_path.exists():
-        ref_file = output_dir / "ref_image_path.txt"
-        if ref_file.exists():
-            cand = Path(ref_file.read_text(encoding="utf-8").strip()).resolve()
-            if cand.exists():
-                ref_image_path = cand
-    if not ref_image_path or not ref_image_path.exists():
-        # Try data/jobs/<job_id>/REFERENCE_STYLE.*
-        for ext in (".png", ".jpg", ".jpeg", ".webp"):
-            cand = Path(f"./data/jobs/{job_id}/REFERENCE_STYLE{ext}").resolve()
-            if cand.exists():
-                ref_image_path = cand
-                break
-    if (not ref_image_path or not ref_image_path.exists()) and job_id:
-        # Try DB: load job's reference image path
-        try:
-            from app.database import async_session as _sess
-            from app.models.models import Job, Reference
-
-            async with _sess() as db:
-                j = await db.get(Job, job_id)
-                if j and j.reference_id:
-                    r = await db.get(Reference, j.reference_id)
-                    if r and r.image_path and Path(r.image_path).exists():
-                        ref_image_path = Path(r.image_path).resolve()
-        except Exception as e:
-            logger.warning("Could not query reference image for job %s from DB: %s", job_id, e)
-
-    if ref_image_path and ref_image_path.exists():
-        print(f"🖼️ [FLOW AUTOMATOR] Reference image for job {job_id}: {ref_image_path} ({ref_image_path.stat().st_size//1024} KB)")
-    else:
-        # No reference image found — will do text-only
-        ref_image_path = None
-        print(f"ℹ️ [FLOW AUTOMATOR] No reference image found for job {job_id} — running prompt-only (fallback)")
+    ref_image_path = await _resolve_reference_image(job_id, reference_image)
 
     print(f"\n⚡ [FLOW AUTOMATOR] Starting automated generation for Job {job_id}...")
     print(f"📝 Prompt: {prompt[:120]}...")
 
     async with async_playwright() as p:
-        ctx = None
-        for attempt in range(3):
-            # Clean stale Chromium profile locks
-            for lock in ["SingletonLock", "SingletonCookie", "SingletonSocket", "lockfile"]:
-                lock_file = PROFILE_DIR / lock
-                if lock_file.exists():
-                    try:
-                        lock_file.unlink()
-                    except Exception:
-                        pass
+        ctx = await _launch_flow_context(p)
 
-            try:
-                ctx = await p.chromium.launch_persistent_context(
-                    user_data_dir=str(PROFILE_DIR),
-                    headless=False,
-                    no_viewport=True,
-                    args=["--disable-blink-features=AutomationControlled", "--start-maximized"],
-                )
-                break
-            except Exception as e:
-                print(f"⚠️ [FLOW AUTOMATOR] Launch attempt {attempt + 1} failed: {e}. Cleaning...")
-                _kill_stale_flow_chrome()
-                await asyncio.sleep(2)
-
-        if not ctx:
-            raise RuntimeError("Failed to launch Google Flow browser after 3 attempts due to profile lock.")
-
-        page = ctx.pages[0] if ctx.pages else await ctx.new_page()
-
-        # Step 1: Open the Flow project workspace. Configuration first
-        # (settings.flow_project_url / FLOW_PROJECT_URL in .env), then the workspace
-        # that worked last time, then discovery, then creation — see `_open_project`.
-        # Every failure path here hands the browser back before raising, or the next
-        # run spends its first two attempts clearing a profile lock.
-        try:
-            project_url = await _open_project(page, job_id)
-        except (FlowGenerationError, PlaywrightError):
-            await _close_quietly(ctx)
-            raise
-        print(f"📂 [FLOW AUTOMATOR] Workspace: {project_url}")
+        # Step 1: Open the Flow project workspace.
+        page, project_url = await _acquire_flow_page(ctx, job_id)
 
         watcher = _GenerationWatcher(page)
         watcher.attach()
@@ -1640,87 +2019,18 @@ async def generate_flow_batch_automated(job_id: str, prompt: str, count: int = 4
         print(f"⚡ [FLOW AUTOMATOR] Submitted via {clicked}")
 
         # Step 5: wait for Flow to answer via network responses or newly mounted canvas cards.
-        deadline = asyncio.get_event_loop().time() + GENERATION_TIMEOUT_SECONDS
-        started_at = asyncio.get_event_loop().time()
-        first_media_at: float | None = None
-        all_network_at: float | None = None
-        canvas_new_urls: list[str] = []
-        tick = 0
-        while asyncio.get_event_loop().time() < deadline:
-            await asyncio.sleep(1.5)
-            tick += 1
-            now = asyncio.get_event_loop().time()
-            elapsed_s = now - started_at
-
-            # Dual-layer check: poll canvas for newly appeared generated images.
-            # Google Flow renders take at least 15-20s. We do NOT poll canvas in the
-            # first 10s to guarantee no late-hydrating existing cards are captured as "new".
-            if elapsed_s >= 10:
-                current_canvas = await _get_canvas_media_urls(page)
-                new_on_canvas = [u for u in current_canvas if media_identifier(u) not in canvas_baseline_ids]
-                for u in new_on_canvas:
-                    ident = media_identifier(u)
-                    existing_ids = {media_identifier(existing) for existing in canvas_new_urls}
-                    if ident not in existing_ids:
-                        canvas_new_urls.append(u)
-                        print(f"🖼️ [FLOW AUTOMATOR] Captured newly generated canvas variation: {u[:70]}...")
-
-            total_found = max(watcher.harvest.total, len(canvas_new_urls))
-            if total_found and first_media_at is None:
-                first_media_at = now
-
-            # If all requested variations are confirmed on the canvas, proceed immediately!
-            if len(canvas_new_urls) >= count:
-                print(f"✅ [FLOW AUTOMATOR] All {count} requested variations verified on canvas!")
-                break
-
-            # If network captured all requested variations, wait up to 15s for the canvas cards to finish mounting
-            if watcher.harvest.total >= count:
-                if all_network_at is None:
-                    all_network_at = now
-                    print(f"📡 [FLOW AUTOMATOR] All {count} network responses received ({len(canvas_new_urls)}/{count} on canvas). Waiting for cards to mount...")
-                if len(canvas_new_urls) >= count or (now - all_network_at > 15):
-                    break
-
-            # Flow answered, but with fewer than requested. Give the remaining
-            # responses a grace window, then work with what it actually sent
-            # rather than waiting out the full timeout.
-            if first_media_at is not None and now - first_media_at > 35:
-                print(f"ℹ️ [FLOW AUTOMATOR] Flow named {total_found} of {count} "
-                      "media in the grace window; proceeding with those.")
-                break
-            # No generation request at all after a generous window means the submit
-            # was accepted by the page but Flow never asked its backend to render.
-            # Only give up if neither request was sent nor submit was confirmed by prompt clear.
-            if (not watcher.generation_requests and not total_found
-                    and "confirmed by prompt bar cleared" not in clicked
-                    and now - started_at > NO_REQUEST_GIVE_UP_SECONDS):
-                print("⚠️ [FLOW AUTOMATOR] No generation request left the browser in "
-                      f"{NO_REQUEST_GIVE_UP_SECONDS:.0f}s — not waiting out the timeout.")
-                break
-
-            if tick % 7 == 0:
-                progress = await _safe_eval(page, """
-                    () => {
-                        const text = document.body ? document.body.innerText : '';
-                        const match = text.match(/(\\d{1,3})\\s?%/);
-                        return match ? match[1] : null;
-                    }
-                """, what="poll render progress")
-                elapsed = int(GENERATION_TIMEOUT_SECONDS - (deadline - now))
-                print(f"⏳ [FLOW AUTOMATOR] {elapsed}s elapsed"
-                      + (f", Flow reports {progress}%" if progress else "")
-                      + f", {total_found} media named so far ({len(canvas_new_urls)} on canvas)...")
+        outcome = await _wait_for_generation(page, watcher, count, canvas_baseline_ids, clicked)
+        canvas_new_urls = outcome.canvas_new_urls
 
         await watcher.drain()
         watcher.detach()
 
-        total_found = max(watcher.harvest.total, len(canvas_new_urls))
+        total_found = outcome.total_found
         if not total_found:
             alerts = await _safe_eval(page, _JS_PAGE_ALERTS, what="read page alerts") or []
             await _debug_shot(page, f"flow_no_media_{job_id[:8]}")
             await _close_quietly(ctx)
-            waited = int(asyncio.get_event_loop().time() - started_at)
+            waited = int(outcome.elapsed)
             raise FlowGenerationError(
                 f"Google Flow did not return any generated media (waited {waited}s of "
                 f"{GENERATION_TIMEOUT_SECONDS}s). Nothing was downloaded, so no pre-existing "
@@ -1744,56 +2054,7 @@ async def generate_flow_batch_automated(job_id: str, prompt: str, count: int = 4
         # from the generation request. `page.request` adds the profile's cookies.
         # Any failure falls back to the render-resolution bytes — an upsample
         # must never cost a variation.
-        upscaler = None
-        resolution = (getattr(settings, "flow_upscale_resolution", "2k") or "none").strip().lower()
-        if resolution in ("2k", "4k") and watcher.variations:
-            if watcher.request_headers and watcher.api_base:
-                from app.services.flow_upscale import (
-                    UPSCALE_TIMEOUT_MS,
-                    media_id_candidates,
-                    upscale_to_bytes,
-                )
-
-                auth = watcher.request_headers.get("authorization", "")
-                api_base = watcher.api_base
-                project_id = watcher.project_id
-
-                async def _execute(url: str, payload: dict) -> Any:
-                    resp = await page.request.post(
-                        url,
-                        data=payload,
-                        headers={"authorization": auth, "content-type": "application/json"},
-                        timeout=UPSCALE_TIMEOUT_MS,
-                    )
-                    if resp.status != 200:
-                        snippet = ""
-                        with contextlib.suppress(Exception):
-                            snippet = (await resp.text())[:300]
-                        raise RuntimeError(f"HTTP {resp.status}: {snippet or '(no body)'}")
-                    return await resp.json()
-
-                async def upscaler(media_id: str) -> bytes | None:  # noqa: F811 — intentional shadow
-                    candidates = media_id_candidates(media_id)
-                    for attempt, candidate in enumerate(candidates, 1):
-                        body = await upscale_to_bytes(
-                            _execute, api_base, candidate,
-                            resolution=resolution, project_id=project_id,
-                            on_failure=lambda m: print(f"⚠️ [FLOW AUTOMATOR] {m}"),
-                        )
-                        if body is not None:
-                            if candidate != media_id:
-                                print("✅ [FLOW AUTOMATOR] Upsampler accepted the bare id segment.")
-                            return body
-                        if attempt < len(candidates):
-                            print("⏳ [FLOW AUTOMATOR] Retrying upsample with the alternate id form...")
-                            await asyncio.sleep(6)
-                    return None
-
-                print(f"🔼 [FLOW AUTOMATOR] 2K upsampling enabled ({resolution.upper()}) — "
-                      "requesting print-resolution bytes from Flow's upsampler.")
-            else:
-                print("ℹ️ [FLOW AUTOMATOR] Upsampling requested but the generation request's "
-                      "auth was not captured; using render-resolution bytes.")
+        upscaler = _build_upscaler(page, watcher)
 
         image_paths, problems = await _save_harvest(
             page, watcher.harvest, output_dir, job_id, count,

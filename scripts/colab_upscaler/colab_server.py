@@ -35,6 +35,8 @@ def health_check():
     return {
         "status": "online",
         "service": "Pinterest Realism Engine AI Upscaler",
+        "model": MODEL_FILE,
+        "max_output_px": MAX_OUTPUT_PX,
         "device": torch.cuda.get_device_name(0) if torch.cuda.is_available() else "cpu",
         "half_precision": device.type == "cuda"
     }
@@ -43,20 +45,41 @@ def health_check():
 async def upscale_endpoint(file: UploadFile = File(...)):
     raw_bytes = await file.read()
     input_image = Image.open(io.BytesIO(raw_bytes)).convert("RGB")
-    
+
     tensor = TF.to_tensor(input_image).unsqueeze(0).to(device)
     if device.type == "cuda":
         tensor = tensor.half()
-        
+
     with torch.no_grad():
         output_tensor = upscale_model(tensor)
         output_tensor = output_tensor.clamp(0, 1)
-        
+
     output_image = TF.to_pil_image(output_tensor.squeeze(0).float().cpu())
-    
+
+    # Cap the 4x output before it crosses the tunnel.
+    #
+    # Real-ESRGAN is a 4x model: a 1080px input becomes 4320px, which encodes to
+    # roughly 21 MB at q98/4:4:4 and is then immediately downscaled back to
+    # ~1080px on the client and discarded. Downscaling here, on the GPU, keeps
+    # the detail that actually survives while cutting the transfer ~20x.
+    if max(output_image.size) > MAX_OUTPUT_PX:
+        scale = MAX_OUTPUT_PX / max(output_image.size)
+        output_image = output_image.resize(
+            (max(1, round(output_image.width * scale)),
+             max(1, round(output_image.height * scale))),
+            Image.Resampling.LANCZOS,
+        )
+
     output_buf = io.BytesIO()
-    output_image.save(output_buf, format="JPEG", quality=98, subsampling=0, optimize=True)
-    return Response(content=output_buf.getvalue(), media_type="image/jpeg")
+    # q92 4:2:0 — the client downscales further anyway, so higher quality here
+    # is pure transfer cost. optimize=True was costing CPU on the GPU box for a
+    # negligible size win.
+    output_image.save(output_buf, format="JPEG", quality=92, subsampling=2)
+    return Response(
+        content=output_buf.getvalue(),
+        media_type="image/jpeg",
+        headers={"X-Output-Size": f"{output_image.width}x{output_image.height}"},
+    )
 
 def start_api():
     uvicorn.run(app, host="127.0.0.1", port=8000, log_level="warning")

@@ -65,3 +65,8 @@ vault/02 - Bugs & Issues/_Archive - Auto Bugs/
 *.log
 scratch_log.txt
 scratch/downloaded_flow/
+scratch/_*
+scratch/*.png
+scratch/*.py
+scratch/baseline/
+*.patch

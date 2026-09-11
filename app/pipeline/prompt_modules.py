@@ -1071,13 +1071,25 @@ def get_relevant_module_items(
         selected_keys += [k for k in CLEAN_PRODUCT_MODULES if k in MODULES]
 
     # ── 2. Human tactile physics — any human at all gets skin realism
+    # Hand-specific modules (cuticles, grip blanching, wrist tendons) only make
+    # sense when hands are actually in frame. The old test `"partial" in human`
+    # also matched `partial_body`, which is the enum for a torso/legs-in-frame
+    # shot with no hands in it — so flat-lay and mid-body apparel scenes were
+    # handed cuticle-oil and grip-physics instructions they could never satisfy.
+    # Canonical enum: full | partial_hand_arm | partial_body | none.
     if human != "none":
-        if not is_clean_class:
-            selected_keys += ["SKIN_CUTICLE_OIL_GLOW"]
-        selected_keys += ["HAND_PRESSURE_GRIP"]
-        if "hand" in human or "partial" in human:
-            selected_keys += ["SKIN_NATURAL_PORES_MATTE", "HAND_CASUAL_REST", "WRIST_TENSION_VEINS"]
-        selected_keys += ["HAND_TACTILE_EXTRA_001", "SKIN_PORE_VARIANT_002"]
+        has_hands = "hand" in human or human == "full"
+        if has_hands:
+            if not is_clean_class:
+                selected_keys += ["SKIN_CUTICLE_OIL_GLOW"]
+            selected_keys += [
+                "HAND_PRESSURE_GRIP",
+                "SKIN_NATURAL_PORES_MATTE",
+                "HAND_CASUAL_REST",
+                "WRIST_TENSION_VEINS",
+                "HAND_TACTILE_EXTRA_001",
+            ]
+        selected_keys += ["SKIN_PORE_VARIANT_002"]
 
     # ── 3. Retail Discovery & Cart Haul blueprint (only if not a clean tech/kitchen product)
     if fmt in ("discovery", "shopping_cart", "product_rack", "unexpected_find"):
@@ -1136,15 +1148,15 @@ def get_relevant_module_items(
         selected_keys += ["FOOD_SURFACE_001", "GLASS_CONDENSATION_BEADS"]
 
     # ── 9. Optics micro-triggers — lightly added to every pin so diffusion never looks CGI
-    selected_keys += ["PHONE_LENS_WIDE_DISTORTION", "COMPUTATIONAL_HDR_NOISE", "NATURAL_OPTICAL_FALLOFF"]
+    always_keys: list[str] = ["PHONE_LENS_WIDE_DISTORTION", "COMPUTATIONAL_HDR_NOISE", "NATURAL_OPTICAL_FALLOFF"]
     if fmt in ("bedroom_home", "flat_lay") and not is_clean_class:
-        selected_keys += ["BLOWN_WINDOW_HIGHLIGHTS"]
+        always_keys += ["BLOWN_WINDOW_HIGHLIGHTS"]
     if fmt in ("discovery", "shopping_cart"):
-        selected_keys += ["STORE_WINDOW_REFLECTIONS"]
+        always_keys += ["STORE_WINDOW_REFLECTIONS"]
 
     # ── 10. Lived-in clutter — always add one so the pin never looks showroom-empty
     if fmt not in ("discovery", "shopping_cart"):
-        selected_keys += ["TABLETOP_EVERYDAY_TILES", "CLUTTER_EXTRA_001"]
+        always_keys += ["TABLETOP_EVERYDAY_TILES", "CLUTTER_EXTRA_001"]
 
     # ── 11. Viral hook spice
     if klass.key in ("nail_art", "toys") or fmt in ("hands_holding", "unboxing"):
@@ -1153,16 +1165,32 @@ def get_relevant_module_items(
     # Filter out messy UGC modules if this is a clean product class
     if is_clean_class:
         selected_keys = [k for k in selected_keys if k not in MESSY_UGC_MODULES]
+        always_keys = [k for k in always_keys if k not in MESSY_UGC_MODULES]
 
-    # Deduplicate, keep order, cap to 10
-    seen = set()
+    # Deduplicate, keep order, cap to 10.
+    #
+    # Sections 9 and 10 are documented as added to *every* pin, but they are
+    # appended last while sections 1-8 routinely produce more than 10 keys on
+    # their own — so the old flat cap discarded the optics and lived-in-clutter
+    # modules in exactly the dense scenes that needed them most (which is why
+    # `partial_body` could end up with zero skin modules). Reserve their slots
+    # before spending the budget on the blueprint.
+    _CAP = 10
+    seen: set[str] = set()
     items: list[tuple[str, str]] = []
-    for k in selected_keys:
-        if k not in seen and k in MODULES:
-            seen.add(k)
-            items.append((k, MODULES[k]))
-        if len(items) >= 10:
-            break
+
+    def _push(key: str) -> None:
+        if key in seen or key not in MODULES:
+            return
+        seen.add(key)
+        items.append((key, MODULES[key]))
+
+    always_live = [k for k in always_keys if k in MODULES]
+    blueprint_budget = max(0, _CAP - len(always_live))
+    for k in selected_keys[:blueprint_budget]:
+        _push(k)
+    for k in always_keys:
+        _push(k)
 
     # If still under 6, pad with random lived-in / lighting extras so every prompt is dense
     if len(items) < 6:
