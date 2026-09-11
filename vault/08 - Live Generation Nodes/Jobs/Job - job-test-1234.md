@@ -6,7 +6,7 @@ product_name: "Aesthetic Ceramic Vase"
 state: "OUTPUT_UPLOADED"
 prompt_version: 0
 is_rework: false
-updated: "2026-09-08 19:21:35 UTC"
+updated: "2026-09-11 18:37:41 UTC"
 tags:
   - job/live
   - state/output_uploaded
@@ -19,7 +19,7 @@ tags:
 - **Product Subject:** [[Product - Aesthetic Ceramic Vase]]
 - **Campaign:** [[Campaign - Unassigned]]
 - **Prompt Version:** `v0` 
-- **Last Sync:** `2026-09-08 19:21:35 UTC`
+- **Last Sync:** `2026-09-11 18:37:41 UTC`
 
 ---
 

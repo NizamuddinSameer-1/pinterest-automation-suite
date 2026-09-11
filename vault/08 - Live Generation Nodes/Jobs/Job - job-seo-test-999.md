@@ -6,7 +6,7 @@ product_name: "Textured Ceramic Planter"
 state: "OUTPUT_UPLOADED"
 prompt_version: 0
 is_rework: false
-updated: "2026-09-10 18:43:37 UTC"
+updated: "2026-09-11 18:37:54 UTC"
 tags:
   - job/live
   - state/output_uploaded
@@ -19,7 +19,7 @@ tags:
 - **Product Subject:** [[Product - Textured Ceramic Planter]]
 - **Campaign:** [[Campaign - Unassigned]]
 - **Prompt Version:** `v0` 
-- **Last Sync:** `2026-09-10 18:43:37 UTC`
+- **Last Sync:** `2026-09-11 18:37:54 UTC`
 
 ---
 
