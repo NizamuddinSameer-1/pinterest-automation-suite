@@ -58,25 +58,46 @@ def _git_exe() -> str:
     return "git"  # last resort; will error loudly as before
 
 
-async def _run_git_cmd(cmd: list[str], cwd: Path) -> tuple[int, str, str]:
-    """Execute a git CLI command asynchronously without blocking the event loop."""
+# Local git plumbing (status/add/commit/remote) returns in well under a second.
+# A push is a network round-trip to GitHub and can legitimately take much longer,
+# especially on the first push or when many files changed. Sharing one 30s budget
+# between them meant a slow-but-successful push was killed mid-flight and
+# reported as a failure — one of the ways auto-push was being swallowed.
+_GIT_LOCAL_TIMEOUT_S = 30.0
+_GIT_NETWORK_TIMEOUT_S = 180.0
+
+
+async def _run_git_cmd(
+    cmd: list[str],
+    cwd: Path,
+    timeout: float = _GIT_LOCAL_TIMEOUT_S,
+) -> tuple[int, str, str]:
+    """
+    Execute a git CLI command asynchronously without blocking the event loop.
+
+    GIT_TERMINAL_PROMPT=0 makes a missing/expired credential fail immediately
+    with a readable message instead of blocking forever on an invisible prompt
+    (or popping a GUI auth window) inside a headless background task.
+    """
+    env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
     try:
         proc = await asyncio.create_subprocess_exec(
             _git_exe(),
             *cmd,
             cwd=str(cwd),
+            env=env,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30.0)
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         return (
             proc.returncode or 0,
             stdout.decode("utf-8", errors="ignore").strip(),
             stderr.decode("utf-8", errors="ignore").strip(),
         )
     except asyncio.TimeoutError:
-        logger.warning("Git command timed out: git %s", " ".join(cmd))
-        return (-1, "", "Command timed out (30s)")
+        logger.warning("Git command timed out after %.0fs: git %s", timeout, " ".join(cmd))
+        return (-1, "", f"Command timed out ({timeout:.0f}s)")
     except Exception as e:
         logger.error("Git execution failed: git %s: %s", " ".join(cmd), e)
         return (-1, "", str(e))
@@ -291,6 +312,74 @@ async def generate_catalog_index(repo_dir: Path | None = None) -> str:
     return rendered_index
 
 
+async def check_push_readiness(repo_dir: Path | None = None) -> dict[str, Any]:
+    """
+    Read-only probe of whether auto-push can actually succeed.
+
+    Runs `git ls-remote` against origin. That performs the same authentication
+    handshake as `push` but changes nothing on the remote, so it is safe to call
+    from a health check or on demand.
+
+    This probe exists because its absence was expensive: LOOKBOOK_GIT_AUTO_PUSH
+    was true, generation reported success, and every push silently failed on
+    credentials. Nine lookbook pages ended up recorded as pin destinations while
+    never reaching the live site. A push that cannot authenticate should be
+    loudly visible, not discovered weeks later from 404s.
+    """
+    repo = repo_dir or _get_lookbooks_dir()
+    result: dict[str, Any] = {
+        "repo": str(repo),
+        "remote": None,
+        "branch": getattr(settings, "lookbook_git_branch", "main"),
+        "auto_push": bool(getattr(settings, "lookbook_git_auto_push", False)),
+        "auth_ok": False,
+        "ready": False,
+        "message": "",
+        "hint": "",
+    }
+
+    if not (repo / ".git").exists():
+        result["message"] = "lookbooks directory is not a git repository yet"
+        result["hint"] = "It is initialised on first lookbook generation."
+        return result
+
+    code, remotes, _ = await _run_git_cmd(["remote"], cwd=repo)
+    if "origin" not in remotes.split():
+        result["message"] = "no 'origin' remote configured"
+        result["hint"] = "Set LOOKBOOK_GIT_REMOTE in .env to your repository URL."
+        return result
+
+    code, url_out, _ = await _run_git_cmd(["remote", "get-url", "origin"], cwd=repo)
+    result["remote"] = url_out
+
+    code, out, err = await _run_git_cmd(
+        ["ls-remote", "--heads", "origin"], cwd=repo, timeout=_GIT_NETWORK_TIMEOUT_S
+    )
+    if code == 0:
+        result["auth_ok"] = True
+        result["ready"] = True
+        result["message"] = "remote reachable and authenticated"
+        return result
+
+    blob = f"{out} {err}".lower()
+    result["message"] = (err or out or "git ls-remote failed").strip()
+    if "could not read username" in blob or "terminal prompts disabled" in blob:
+        result["hint"] = (
+            "No credential available. Either run `gh auth setup-git` (if the "
+            "GitHub CLI is authenticated), or use a token URL in "
+            "LOOKBOOK_GIT_REMOTE: https://<PAT>@github.com/<user>/<repo>.git"
+        )
+    elif "authentication failed" in blob or "403" in blob:
+        result["hint"] = "Credential rejected. The token may be expired or lack the 'repo' scope."
+    elif "repository not found" in blob or "404" in blob:
+        result["hint"] = "Repository not found, or the credential cannot see it (private repo needs 'repo' scope)."
+    elif "timed out" in blob:
+        result["hint"] = "Network timeout reaching GitHub."
+    else:
+        result["hint"] = "Check network access and the remote URL."
+    return result
+
+
 async def commit_and_push_lookbook(
     slug: str,
     repo_dir: Path | None = None,
@@ -340,7 +429,9 @@ async def commit_and_push_lookbook(
         }
 
     logger.info("Pushing lookbook %s to remote repository (branch: %s)...", slug, branch)
-    code, push_out, push_err = await _run_git_cmd(["push", "-u", "origin", branch], cwd=repo)
+    code, push_out, push_err = await _run_git_cmd(
+        ["push", "-u", "origin", branch], cwd=repo, timeout=_GIT_NETWORK_TIMEOUT_S
+    )
     
     if code == 0:
         logger.info("Successfully pushed lookbook to GitHub (%s/%s)", repo.name, branch)
