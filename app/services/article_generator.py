@@ -318,6 +318,10 @@ async def generate_lookbook_html(
         related_lookbooks=related_lookbooks,
         product_data=product_data,
         year=datetime.datetime.now().year,
+        # Article/BreadcrumbList structured data needs an absolute site root and
+        # a real publication date. A generated review page is published now.
+        site_base_url=f"https://{live_domain}",
+        date_iso=datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d"),
     )
 
     # 7. Save locally to disk
