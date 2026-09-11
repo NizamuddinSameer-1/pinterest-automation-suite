@@ -123,6 +123,51 @@ def _discover_related_lookbooks(current_slug: str, current_category: str = "") -
     return related[:3]
 
 
+def slugify_product_name(name: str, max_len: int = 60) -> str:
+    """
+    Build a keyword-rich, word-boundary-safe slug from a product name.
+
+    Truncates on a word boundary so slugs never end in a dangling fragment
+    (the old `[:40]` slice produced `...halloween-dec`, `...test-com`,
+    `...job-batc`). Separator runs are collapsed, so no `--` can appear.
+    """
+    text = re.sub(r"[^a-zA-Z0-9]+", "-", (name or "").lower()).strip("-")
+    if not text:
+        return "curated-item"
+    if len(text) <= max_len:
+        return text
+    cut = text[:max_len]
+    if "-" in cut:
+        cut = cut[: cut.rfind("-")]
+    return cut.strip("-") or text[:max_len].strip("-")
+
+
+def build_canonical_slug(
+    product_name: str,
+    asin: str | None = None,
+    job_id: str = "",
+) -> str:
+    """
+    Return the stable public slug for a product's lookbook.
+
+    Stability matters more than uniqueness here: the previous scheme appended
+    `job_id[:8]`, so every generation run minted a NEW url for the same product.
+    One "Black Leggings" ended up as five competing pages
+    (black-leggings-5fa494c3 / -84153c9d / -cc6a4c9b / -2c9aae73, leggings-f5c95d65),
+    so search engines ranked none of them.
+
+    Disambiguation order:
+      1. ASIN  — stable across runs, and unique when two products share a title
+                 (there are two distinct "Wedtrend ... Vintage Tea Dress" ASINs).
+      2. short job hash — only for products with no ASIN, which cannot monetise
+                 anyway and are placeholders rather than real catalogue items.
+    """
+    base = slugify_product_name(product_name)
+    if asin and str(asin).strip():
+        return f"{base}-{str(asin).strip().lower()}"
+    return f"{base}-{job_id[:8]}" if job_id else base
+
+
 async def generate_lookbook_html(
     job_id: str,
     product_data: dict[str, Any],
@@ -151,10 +196,19 @@ async def generate_lookbook_html(
             image_paths=image_paths,
         )
 
-    # 2. Create clean canonical slug & paths
+    # 2. Create a stable canonical slug & paths.
+    # The ASIN is resolved up here (rather than alongside the affiliate link
+    # further down) because the slug needs it to tell apart two products that
+    # legitimately share a title.
     raw_prod_name = product_data.get("name") or "curated-item"
-    prod_name_slug = re.sub(r"[^a-zA-Z0-9]+", "-", raw_prod_name.lower()).strip("-")[:40]
-    slug = f"{prod_name_slug}-{job_id[:8]}"
+    raw_affiliate = affiliate_url or product_data.get("affiliate_url") or ""
+    product_url = product_data.get("product_url") or ""
+
+    from app.services.amazon_paapi import extract_asin
+
+    asin = extract_asin(raw_affiliate) or extract_asin(product_url)
+    prod_name_slug = slugify_product_name(raw_prod_name)
+    slug = build_canonical_slug(raw_prod_name, asin=asin, job_id=job_id)
 
     job_output_dir = settings.outputs_path / job_id
     job_output_dir.mkdir(parents=True, exist_ok=True)
@@ -209,13 +263,9 @@ async def generate_lookbook_html(
     currency = product_data.get("currency", "$")
     price_display = f"{currency}{price_val}" if price_val else "Check Price"
 
-    raw_affiliate = affiliate_url or product_data.get("affiliate_url") or ""
-    product_url = product_data.get("product_url") or ""
-    
+    # raw_affiliate, product_url and asin were resolved in step 2 (the slug needs them).
     from app.services.affiliate_router import build_smart_redirect_url
-    from app.services.amazon_paapi import extract_asin
 
-    asin = extract_asin(raw_affiliate) or extract_asin(product_url)
     if asin:
         final_affiliate_url = build_smart_redirect_url(
             asin=asin,

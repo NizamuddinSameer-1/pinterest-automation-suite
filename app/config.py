@@ -132,7 +132,14 @@ class Settings(BaseSettings):
     vercel_api_token: str = ""
     vercel_project_name: str = "pinterest-lookbooks"
     vercel_team_id: str = ""
-    bridge_domain: str = ""
+    # Canonical host for every generated URL (canonical tag, og:url, sitemap, and
+    # the smart affiliate redirect). This MUST match the host the live pins point
+    # at, otherwise the sitemap and canonicals advertise a different deployment
+    # than the one users actually land on — which splits ranking signals.
+    # Verified 2026-09-11: pinterest-lookbooks-beta.vercel.app serves the lookbook
+    # catalog + sitemap; pinterest-lookbooks.vercel.app is a stale deployment
+    # (no sitemap, 404s on lookbooks) and must never be used as canonical.
+    bridge_domain: str = "pinterest-lookbooks-beta.vercel.app"
     require_lookbook_destination: bool = False  # If True, pin drafting requires a deployed lookbook. Default False: pin drafts use direct affiliate/smart redirect links.
     auto_create_lookbooks: bool = False  # If False (default), lookbooks are only created on-demand when the user clicks 'Create Batch Lookbook'.
 

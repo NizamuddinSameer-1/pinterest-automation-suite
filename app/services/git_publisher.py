@@ -173,6 +173,35 @@ def _extract_meta_from_html(html_file: Path) -> dict[str, Any] | None:
         return None
 
 
+# Slugs that are test/dev scaffolding rather than real published reviews.
+# They must never reach the public catalog or sitemap: thin near-duplicate pages
+# burn crawl budget and dilute quality signals on a young domain.
+_NON_PUBLIC_SLUG_MARKERS: tuple[str, ...] = (
+    "test-",
+    "-test-",
+    "test-tld",
+    "test-com",
+    "prod-",
+    "job1",
+    "job-batch",
+    "job-batc",
+    "reference-product",
+)
+
+
+def is_public_lookbook_slug(slug: str) -> bool:
+    """
+    False when a slug is test/dev scaffolding that must stay out of the catalog.
+
+    Used by both the catalog grid and the sitemap so the two can never disagree.
+    A blank slug returns False: if we cannot identify the page, we do not index it.
+    """
+    s = (slug or "").lower().strip()
+    if not s:
+        return False
+    return not any(marker in s for marker in _NON_PUBLIC_SLUG_MARKERS)
+
+
 async def generate_catalog_index(repo_dir: Path | None = None) -> str:
     """
     Build and save a master `index.html` catalog grid listing all active lookbooks.
@@ -188,6 +217,10 @@ async def generate_catalog_index(repo_dir: Path | None = None) -> str:
             continue
         # Skip raw UUID file if a slug version exists
         if uuid_pattern.match(html_file.stem):
+            continue
+        # Skip test/dev scaffolding — never index it
+        if not is_public_lookbook_slug(html_file.stem):
+            logger.info("Excluding non-public slug from catalog/sitemap: %s", html_file.name)
             continue
 
         meta = _extract_meta_from_html(html_file)
