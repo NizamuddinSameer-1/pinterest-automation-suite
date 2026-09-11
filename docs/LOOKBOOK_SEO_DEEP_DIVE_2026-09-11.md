@@ -527,10 +527,9 @@ one domain — `pinterest-lookbooks-beta.vercel.app`. The similar-looking
 it has no sitemap and 404s on lookbook paths. The `config.py` default set in
 11.4 matches the project's real domain.
 
-> ⚠️ **Still to fix:** the git remote needs a token URL
-> (`https://<PAT>@github.com/...`) or a credential helper, otherwise the git
-> leg of the deploy keeps failing. The Vercel REST leg now works on its own,
-> since the token is restored.
+> ✅ **Resolved** — see 11.9. The git credential is fixed with
+> `gh auth setup-git` (no PAT required), and two real pushes have deployed to
+> production.
 
 > 🔐 **Security note:** the `.env` (API keys, PA-API secret, Vercel token)
 > still sits in the history of 6 local branches — `master`,
@@ -565,11 +564,71 @@ exactly how the wrong host got baked into canonicals), and documented that a
 plain `https://github.com/...` remote **cannot** push non-interactively, with the
 token-URL alternative spelled out.
 
-### 11.9 Still open (P1)
+### 11.9 Auto-push fixed end-to-end ✅
+**Root cause:** the remote is a plain `https://github.com/...` URL, and this
+machine has no credential helper and no `~/.git-credentials`, so `git push`
+failed with `could not read Username ... terminal prompts disabled`.
+
+**Fix: `gh auth setup-git`.** The GitHub CLI was already installed (v2.92.0) and
+authenticated as `NizamuddinSameer-1` with `repo` scope. That command wires
+`gh auth git-credential` in as git's credential helper for github.com — no PAT
+to create or paste, and no secret written to disk.
+
+Verified: `git push --dry-run` succeeded on **both** repos, then two real pushes
+deployed to production.
+
+**Code hardening in `git_publisher.py`** — the credential was only half the
+problem; three defects let a broken push stay invisible:
+
+| Defect | Fix |
+|---|---|
+| No way to tell whether pushing works | `check_push_readiness()` — read-only `git ls-remote` probe (same auth handshake as push, mutates nothing), with a specific hint per failure mode |
+| One 30s timeout shared by local plumbing and network push | Split into `_GIT_LOCAL_TIMEOUT_S=30` / `_GIT_NETWORK_TIMEOUT_S=180`; a slow-but-successful push was being killed and reported as a failure |
+| A credential prompt could block a headless task forever | `GIT_TERMINAL_PROMPT=0` on the subprocess |
+
+New: `scripts/check_deploy_readiness.py` — checks `.env`, validates the Vercel
+token against the live API, and probes the git push path. Current output:
+
+```
+[PASS] .env present             37 keys defined
+[PASS] Vercel REST deploy       token valid for nizamuddinsameer5-3092
+[PASS] Git push (auto-deploy)   .../pinterest-lookbooks.git -> main
+READY — a generated lookbook will deploy.
+```
+
+10 tests in `tests/test_git_push_readiness.py`.
+
+### 11.10 The lesson: post-hoc file patching gets reverted ✅
+The first attempt at de-indexing the test pages patched the generated HTML
+*after* the fact (`quarantine_test_lookbooks.py`). **That silently reverted.**
+The app server was running and regenerates lookbook HTML, so the next
+generation wrote the files back without the tag — 3 of 11 pages lost their
+noindex before the first push, and only the sitemap fix went live.
+
+**Moved the policy into the template.** `bridge_page.html` emits
+`<meta name="robots" content="noindex, nofollow">` when `robots_noindex` is
+true, derived in `article_generator` from the same `is_public_lookbook_slug`
+predicate the catalog grid and sitemap already use. A regenerated test page is
+now born with the tag, and the three surfaces can never disagree. The flag
+defaults to false when omitted, so existing callers are unaffected.
+
+> **Rule for this codebase:** any SEO/robots policy must live in the template or
+> generator, never in a post-processing script over generated files.
+
+### 11.11 Verified live production state
+| Check | Result |
+|---|---|
+| 11 test pages | `noindex, nofollow` **live** |
+| 3 real reviews | clean / indexable |
+| Live sitemap | 4 URLs (homepage + 3 reviews) — test pages gone |
+| Deploy readiness | all PASS — "READY" |
+| Auto-push | proven by 2 real production deploys |
+
+### 11.12 Still open (P1)
 - **Edit the 6 repointed pins on Pinterest** (Pinterest stores the destination
   on the pin, so the DB fix alone is not live)
-- Git remote token URL, or the git deploy leg keeps failing
 - Rotate secrets + scrub `.env` from the 6 local branch histories
+- 5 published nail pins have no ASIN equivalent — needs a decision
 - `"nail inspoo"` typo + hardcoded `2026` years in the trend keyword families
 - 40/66 pins share an identical description
 - Real domain to replace `*-beta.vercel.app`
