@@ -418,3 +418,94 @@ For a 23-category taxonomy, 5 curated families is thin — and the fallback prod
 - **On-page fundamentals** — single H1, canonical, OG, Pinterest 1080×1920 OG image, internal cluster links. All correct.
 
 The engineering is strong. The failures are **operational** (pages not deployed, local repo stale) and **URL-level** (slug strategy), not architectural.
+
+---
+
+# 11. Remediation log — what was actually changed
+
+Executed 2026-09-11 after the audit. Two commits in the main repo, one in the
+`data/lookbooks` repo. Test suite: **186 passed** (13 new).
+
+### 11.1 Recovered the trend system ✅
+`git merge --ff-only origin/main` — 18 commits, 1216 files. Backup tag
+`backup-pre-trend-pull-20260911` created at the pre-pull HEAD (`4f1e749`).
+
+Verified on disk afterwards: `trend_research.py` (1095 lines), `trend_sources.py`,
+`trend_scorer.py`, `keyword_packs.py`, `trend_scheduler.py`, `trend_provenance.py`,
+`pinterest_trends_scraper.py` (1889 lines), `TrendRadar.tsx` (2666 lines),
+`scrape_trends_worker.py`, 5 trend test files. `pinterest_seo.py` is now the new
+version with `FRAMEWORKS` (6) + `generate_batch_pins_seo`. 43 trend tests pass.
+App boots clean.
+
+### 11.2 Fixed the slug generator (root cause of cannibalisation) ✅
+`app/services/article_generator.py`
+
+- Added `slugify_product_name()` — word-boundary truncation (60 chars), separator
+  collapsing. No more `--`, no more `…halloween-dec` / `…test-com` / `…job-batc`.
+- Added `build_canonical_slug()` — **stable per product**. ASIN-disambiguated so
+  two products sharing a title stay distinct (the two Wedtrend tea dresses);
+  job hash only as a fallback for no-ASIN placeholders.
+- Moved ASIN resolution above the slug build, since the slug now depends on it.
+
+Verified: `Black Leggings` + ASIN across 3 different job ids → one identical slug.
+`tests/test_canonical_slug.py` (13 tests) pins the contract.
+
+### 11.3 Removed test scaffolding from the index ✅
+- `git_publisher.is_public_lookbook_slug()` — single predicate consulted by both
+  the catalog grid and the sitemap, so they can never disagree.
+- `scripts/quarantine_test_lookbooks.py` — added `noindex, nofollow` to the 11
+  test pages **already live on the edge** (reversible; originals in
+  `data/lookbooks/.quarantine_backup/`, now gitignored).
+- Sitemap went from 15 URLs (8 of them test pages at priority 0.8) to 4: the
+  homepage plus 3 real reviews.
+
+### 11.4 Corrected the canonical host ✅
+`app/config.py` — `bridge_domain` defaulted to `""` and fell back to
+`VERCEL_PROJECT_NAME`, i.e. `pinterest-lookbooks.vercel.app`. With `.env` absent
+(and it is absent — see 11.6) every canonical, `og:url`, sitemap entry and smart
+redirect would have advertised **the wrong host**.
+
+Verified by probe: `pinterest-lookbooks.vercel.app` has no sitemap and 404s on
+lookbook paths; `pinterest-lookbooks-beta.vercel.app` serves the catalog and
+sitemap. The default now names the beta host — the one the pins actually use.
+
+### 11.5 Repointed the dead pin destinations ✅
+`scripts/remediate_pin_destinations.py`
+
+| Pin | Was | Now |
+|---|---|---|
+| WISHTEN Pumpkin Costume | 404 page | `B0CHQJLQTC` |
+| Halloween Pajama Pants | 404 page | `B07WPLQXFK` |
+| 3× Maid Costume | 404 / live-but-no-ASIN | Avidlove `B0C6JMBCLB` |
+| Pumpkin poncho (`[Store]` pin) | 404 page | WISHTEN `B0CHQJLQTC` |
+
+All 6 now route through `/api/go`. Verified live: **HTTP 302 → Amazon with the
+affiliate tag and `ascsubtag` attribution intact.**
+
+Dead destinations: **10 → 0.**
+
+Five published nail pins have no ASIN equivalent (no nail product exists in the
+catalogue) and were reported for review rather than silently rewritten.
+
+> ⚠️ **Pinterest stores the destination on the pin.** The live pins still point
+> at the old URLs. Each of the 6 must be edited on Pinterest (or deleted and
+> republished) before the fix is live. **This is the remaining P0 action.**
+
+### 11.6 New finding: `.env` is missing
+There is no `.env` file. The app runs entirely on `config.py` defaults, so every
+documented setting in `CONTEXT_FOR_AI.md` §8 (LLM keys, Flow project URLs, Vercel
+token, git remote, `LOOKBOOK_GIT_AUTO_PUSH`) is absent. This is very likely why
+the 9 lookbook pages were generated locally but never pushed — the auto-push
+path had no remote or token configured.
+
+**This is now the highest-priority follow-up**: without it, newly generated
+lookbooks will keep accumulating locally instead of deploying.
+
+### 11.7 Still open (P1)
+- `aggregateRating` fabricated `reviewCount: 100` in `bridge_page.html`
+- Missing `Article` / `BreadcrumbList` / `Person` schema
+- `nail inspoo` typo + hardcoded `2026` years in the trend keyword families
+- 40/66 pins share an identical description
+- Real domain to replace `*-beta.vercel.app`
+- 12 FAILED jobs; critiques = 2 vs 101 outputs
+
