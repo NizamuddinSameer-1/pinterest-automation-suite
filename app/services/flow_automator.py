@@ -660,6 +660,10 @@ class _GenerationWatcher:
 
         # Directly catch image responses from Flow's content CDN
         if "flow-content.google/image" in url:
+            # Only a fresh 200 can be this run's render: a 304 revalidation or
+            # an error page belongs to a canvas card that already existed.
+            if getattr(response, "status", 0) != 200:
+                return
             ident = media_identifier(url)
             existing_ids = {media_identifier(u) for u in self.harvest.urls}
             if ident not in existing_ids:
@@ -1380,9 +1384,16 @@ async def _save_harvest(
     for blob in harvest.inline:
         sources.append(("inline", blob))
 
-    # 4. Network harvest URLs
+    # 4. Network harvest URLs — minus anything that was already on the canvas
+    # when we submitted. The CDN direct-catch in `_on_response` fires for
+    # every flow-content response after arming, including an old canvas card
+    # the SPA re-rendered (or revalidated) after submit; the baseline ids are
+    # the truth about what pre-existed, so those can never be this job's output.
     for url in harvest.urls:
         ident = media_identifier(url)
+        if canvas_baseline_ids and ident in canvas_baseline_ids:
+            print(f"  ⏭️ [FLOW AUTOMATOR] Skipping pre-existing canvas image in network harvest ({ident[:24]}...)")
+            continue
         if ident not in seen_ids:
             sources.append(("url", url))
             seen_ids.add(ident)
