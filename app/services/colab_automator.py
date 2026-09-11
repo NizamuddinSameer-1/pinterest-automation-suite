@@ -120,14 +120,21 @@ async def get_or_launch_colab(notebook_url: str | None = None) -> tuple[Page | N
     logger.info("▶️ [COLAB AUTOMATOR] Triggering Run All on Colab notebook...")
     await _trigger_run_all(page)
 
-    # 5. Wait for the Cloudflare Tunnel URL to appear in the notebook cell output (max 35s)
+    # 5. Wait for the Cloudflare Tunnel URL to appear in the notebook cell output (max 90s)
     logger.info("⏳ [COLAB AUTOMATOR] Waiting for AI model to load & tunnel URL to appear...")
-    tunnel_url = await _wait_for_tunnel_url(page, timeout_seconds=35)
+    tunnel_url = await _wait_for_tunnel_url(page, timeout_seconds=90)
     if not tunnel_url:
-        raise RuntimeError("Google Colab tunnel not responsive within 35s (falling back to fast local studio engine).")
+        raise RuntimeError("Google Colab tunnel not responsive within 90s (falling back to fast local studio engine).")
 
     _ACTIVE_TUNNEL_URL = tunnel_url
     TUNNEL_CACHE.write_text(tunnel_url, encoding="utf-8")
+    for cp in [
+        Path("./data/colab_tunnel_url.txt").resolve(),
+        Path("./data/active_colab_tunnel.txt").resolve(),
+    ]:
+        with contextlib.suppress(Exception):
+            cp.write_text(tunnel_url, encoding="utf-8")
+    setattr(settings, "colab_upscaler_url", tunnel_url)
     logger.info("🎉 [COLAB AUTOMATOR] Colab AI Upscaler Online: %s", tunnel_url)
     return page, tunnel_url
 
@@ -214,6 +221,16 @@ async def _ensure_t4_gpu(page: Page) -> None:
 
 async def _trigger_run_all(page: Page) -> None:
     """Dispatch Run All command in Colab."""
+    # 0. Direct toolbar "Run all" button (most reliable in modern Colab)
+    try:
+        toolbar_run_all = page.locator('colab-toolbar-button:has-text("Run all")').first
+        if await toolbar_run_all.count() > 0 and await toolbar_run_all.is_visible():
+            await toolbar_run_all.click()
+            logger.info("⚡ [COLAB AUTOMATOR] Clicked toolbar 'Run all' button")
+            await page.wait_for_timeout(1000)
+    except Exception as e:
+        logger.debug("Toolbar run all notice: %s", e)
+
     # 1. Try Runtime menu -> Run all
     try:
         runtime_menu = page.locator('div[id="runtime-menu-button"], div:text-is("Runtime")').first
@@ -330,7 +347,8 @@ async def upscale_images_via_colab(
                         temp_upscaled.write_bytes(resp.content)
 
                         # Must skip_colab=True! The image was just enhanced by Colab; avoid duplicate upscaling
-                        postprocess_image(temp_upscaled, p, skip_colab=True)
+                        # crop_bottom_px=0 prevents double-cropping the watermark since it was already removed
+                        postprocess_image(temp_upscaled, p, crop_bottom_px=0, skip_colab=True)
                         if temp_upscaled.is_file():
                             temp_upscaled.unlink()
 

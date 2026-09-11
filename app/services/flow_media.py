@@ -54,6 +54,8 @@ _GENERATION_URL_MARKERS = (
     "batchexecute",  # Google Flow / AiSandbox Angular frontend RPC endpoint
     "flowmedia",
     "aisandbox",
+    "flow-content",
+    "ogiz0b",
 )
 
 #: …and is *not* a generation call if its path carries one of these, however many
@@ -77,7 +79,7 @@ _LISTING_URL_MARKERS = (
 _INLINE_IMAGE_KEYS = ("encodedimage", "bytesbase64encoded", "data", "imagebytes", "image")
 
 #: Keys whose string value is a URL the image can be downloaded from.
-_MEDIA_URL_KEYS = ("imageuri", "url", "mediaurl", "fifeurl", "servingurl", "downloaduri", "asb")
+_MEDIA_URL_KEYS = ("imageuri", "url", "mediaurl", "fifeurl", "servingurl", "downloaduri", "asb", "flow-content")
 
 #: Base64 prefixes for the formats Flow returns (JPEG, PNG, WebP).
 _B64_IMAGE_PREFIXES = ("/9j/", "iVBORw0KGgo", "UklGR")
@@ -133,6 +135,26 @@ def endpoint_path(url: str) -> str:
     return f"{parts.netloc}{parts.path}" or url[:80]
 
 
+def media_identifier(url: str) -> str:
+    """
+    Extract a unique identity for an image URL to prevent duplicate or stale attribution.
+
+    - flow-content.google: image UUID (e.g. e0368942-f0dd-40b1-a309-f0206f8ea1ce)
+    - /asb/: ASB ID token (e.g. AB-nOUZDmuIv...)
+    - other: base URL without query params
+    """
+    import re
+    if "flow-content.google/image/" in url:
+        m = re.search(r'/image/([a-zA-Z0-9_-]+)', url)
+        if m:
+            return m.group(1)
+    if "/asb/" in url:
+        m = re.search(r'/asb/([a-zA-Z0-9_-]+)', url)
+        if m:
+            return m.group(1)
+    return url.split("?")[0]
+
+
 def looks_like_generation_url(url: str) -> bool:
     """
     Whether `url` is Flow asking for *new* images rather than describing old ones.
@@ -143,10 +165,13 @@ def looks_like_generation_url(url: str) -> bool:
     """
     if not url:
         return False
+    u_lower = url.lower()
     path = urlsplit(url).path.lower() if "://" in url else url.split("?")[0].lower()
-    if any(marker in path for marker in _LISTING_URL_MARKERS):
+    if any(marker in u_lower for marker in _LISTING_URL_MARKERS):
         return False
-    return any(marker in path for marker in _GENERATION_URL_MARKERS)
+    if "flow-content.google" in u_lower:
+        return True
+    return any(marker in path for marker in _GENERATION_URL_MARKERS) or any(marker in u_lower for marker in ("ogiz0b", "flow-content"))
 
 
 def captured_generation_path() -> str | None:
@@ -200,18 +225,35 @@ def harvest_media(data: Any, into: MediaHarvest | None = None) -> MediaHarvest:
     import re
 
     def _clean_url(u: str) -> str:
+        u = u.rstrip('\\"\'')
+        u = u.replace(r'\u0026', '&').replace('\\u0026', '&').replace('&amp;', '&')
+        u = u.replace(r'\u003d', '=').replace('\\u003d', '=')
+        u = u.replace(r'\u003f', '?').replace('\\u003f', '?')
         if "/asb/" in u and "=s" in u:
             return re.sub(r"=s\d+.*$", "=s0", u)
         return u
 
+    def _normalize_raw(text: str) -> str:
+        t = text.replace(r'\/', '/').replace(r'\"', '"')
+        t = t.replace(r'\u0026', '&').replace('\\u0026', '&').replace('&amp;', '&')
+        t = t.replace(r'\u003d', '=').replace('\\u003d', '=')
+        t = t.replace(r'\u003f', '?').replace('\\u003f', '?')
+        return t
+
     if isinstance(data, str):
-        for u in re.findall(r'https://flow\.google\.com/asb/[^\s"\'\\]+', data):
+        raw = _normalize_raw(data)
+        for u in re.findall(r'https://flow-content\.google/image/[^\s"\'\\]+', raw):
             cu = _clean_url(u)
             if cu not in harvest.urls:
                 harvest.urls.append(cu)
-        for u in re.findall(r'https://[^\s"\'\\]*?getMediaUrlRedirect[^\s"\'\\]*', data):
-            if u not in harvest.urls:
-                harvest.urls.append(u)
+        for u in re.findall(r'https://flow\.google\.com/asb/[^\s"\'\\]+', raw):
+            cu = _clean_url(u)
+            if cu not in harvest.urls:
+                harvest.urls.append(cu)
+        for u in re.findall(r'https://[^\s"\'\\]*?getMediaUrlRedirect[^\s"\'\\]*', raw):
+            cu = _clean_url(u)
+            if cu not in harvest.urls:
+                harvest.urls.append(cu)
         return harvest
 
     if isinstance(data, dict):
@@ -223,15 +265,23 @@ def harvest_media(data: Any, into: MediaHarvest | None = None) -> MediaHarvest:
                     if decoded is not None:
                         harvest.inline.append(decoded)
                         continue
-                if "/asb/" in value:
-                    for u in re.findall(r'https://flow\.google\.com/asb/[^\s"\'\\]+', value):
+                if "flow-content.google" in value or r"flow-content" in value:
+                    val_clean = _normalize_raw(value)
+                    for u in re.findall(r'https://flow-content\.google/image/[^\s"\'\\]+', val_clean):
                         cu = _clean_url(u)
                         if cu not in harvest.urls:
                             harvest.urls.append(cu)
-                elif value.startswith("http") and (
+                if "/asb/" in value or r"\/asb\/" in value:
+                    val_clean = _normalize_raw(value)
+                    for u in re.findall(r'https://flow\.google\.com/asb/[^\s"\'\\]+', val_clean):
+                        cu = _clean_url(u)
+                        if cu not in harvest.urls:
+                            harvest.urls.append(cu)
+                elif ("http" in value or r"http" in value) and (
                     "getMediaUrlRedirect" in value or key_lower in _MEDIA_URL_KEYS
                 ):
-                    cu = _clean_url(value)
+                    val_clean = _normalize_raw(value)
+                    cu = _clean_url(val_clean)
                     if cu not in harvest.urls:
                         harvest.urls.append(cu)
             elif isinstance(value, (dict, list)):

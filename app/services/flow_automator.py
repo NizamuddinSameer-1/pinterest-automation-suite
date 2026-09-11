@@ -60,6 +60,7 @@ from app.services.flow_media import (
     harvest_media,
     harvest_variations,
     looks_like_generation_url,
+    media_identifier,
 )
 
 logger = logging.getLogger("pre.services.flow_automator")
@@ -657,6 +658,15 @@ class _GenerationWatcher:
             if len(self.json_paths) < 40:
                 self.json_paths.append(path)
 
+        # Directly catch image responses from Flow's content CDN
+        if "flow-content.google/image" in url:
+            ident = media_identifier(url)
+            existing_ids = {media_identifier(u) for u in self.harvest.urls}
+            if ident not in existing_ids:
+                self.harvest.urls.append(url)
+                print(f"📡 [FLOW AUTOMATOR] Captured generated image directly from CDN: {url[:70]}...")
+            return
+
         if not self._is_generation(url):
             return
         if path not in self.generation_paths:
@@ -1209,18 +1219,25 @@ async def _submit_prompt(page, box, watcher, wanted_len: int) -> str:
 
 async def _fetch_media(page, url: str) -> bytes | None:
     """
-    Download one media URL using the browser's own credentials.
+    Download one media URL using the browser's credentials or direct CDN fetch.
 
     `page.request` shares the context's cookie jar, so this is an authenticated
-    full-resolution fetch — not an element screenshot, which is what an earlier
-    version fell back to and which made failed renders indistinguishable from
-    successful ones.
+    full-resolution fetch. For flow-content.google signed Cloud CDN URLs, direct
+    HTTPS fetch with browser User-Agent is also used as a reliable fallback.
     """
-    # Upgrade /asb/ preview URLs to full resolution =s0
     import re
+
+    # Unescape any residual JSON/RPC escaping in query strings (e.g. \u0026 -> &)
+    url = url.rstrip('\\"\'')
+    url = url.replace(r'\u0026', '&').replace('\\u0026', '&').replace('&amp;', '&')
+    url = url.replace(r'\u003d', '=').replace('\\u003d', '=')
+    url = url.replace(r'\u003f', '?').replace('\\u003f', '?')
+
+    # Upgrade /asb/ preview URLs to full resolution =s0
     if "/asb/" in url and "=s" in url:
         url = re.sub(r"=s\d+.*$", "=s0", url)
 
+    # 1. Primary authenticated fetch via Playwright's page.request (shares context cookie jar)
     try:
         response = await page.request.get(url)
         if response.status == 200:
@@ -1229,31 +1246,55 @@ async def _fetch_media(page, url: str) -> bytes | None:
                 return body
             print(f"  Notice: media URL returned {len(body)} bytes, below {MIN_IMAGE_BYTES}.")
         else:
-            print(f"  Notice: media URL returned HTTP {response.status}.")
+            print(f"  Notice: media URL returned HTTP {response.status}: {url[:80]}...")
     except Exception as e:  # noqa: BLE001 — the in-page fetch is the real fallback
         print(f"  Notice on authenticated fetch: {e}")
 
+    # 2. Direct fetch fallback for any HTTP(S) URLs (including /asb/ CDN renders)
+    if url.startswith("http"):
+        try:
+            import urllib.request
+            req = urllib.request.Request(
+                url,
+                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36"}
+            )
+            with urllib.request.urlopen(req, timeout=20) as resp:
+                if resp.status == 200:
+                    data = resp.read()
+                    if len(data) >= MIN_IMAGE_BYTES:
+                        return data
+        except Exception as e:
+            print(f"  Notice on urllib media fetch: {e}")
+
+    # 3. In-page fetch using DOM fetch()
     try:
         encoded = await _safe_eval(page, """
             async (url) => {
-                const resp = await fetch(url, { credentials: 'include' });
-                if (!resp.ok) return null;
-                const bytes = new Uint8Array(await resp.arrayBuffer());
-                let binary = '';
-                for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
-                return btoa(binary);
+                try {
+                    const resp = await fetch(url);
+                    if (!resp.ok) return null;
+                    const bytes = new Uint8Array(await resp.arrayBuffer());
+                    let binary = '';
+                    for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+                    return btoa(binary);
+                } catch {
+                    return null;
+                }
             }
         """, url, what="in-page media fetch")
     except (PlaywrightError, FlowGenerationError) as e:
         print(f"  Notice on in-page fetch: {e}")
-        return None
-    if not encoded:
-        return None
-    try:
-        body = base64.b64decode(encoded)
-    except (ValueError, TypeError):
-        return None
-    return body if len(body) >= MIN_IMAGE_BYTES else None
+        encoded = None
+
+    if encoded:
+        try:
+            body = base64.b64decode(encoded)
+            if len(body) >= MIN_IMAGE_BYTES:
+                return body
+        except (ValueError, TypeError):
+            pass
+
+    return None
 
 
 async def _get_canvas_media_urls(page) -> list[str]:
@@ -1267,11 +1308,11 @@ async def _get_canvas_media_urls(page) -> list[str]:
                 const imgs = Array.from(document.querySelectorAll('img'));
                 const results = [];
                 for (const img of imgs) {
-                    const src = img.src || '';
+                    const src = img.src || img.currentSrc || '';
                     if (!src || src.startsWith('data:') || src.includes('avatar') || src.includes('googleusercontent.com/a/')) {
                         continue;
                     }
-                    if (src.includes('/asb/') || src.includes('getMediaUrlRedirect')) {
+                    if (src.includes('/asb/') || src.includes('getMediaUrlRedirect') || src.includes('flow-content.google')) {
                         results.push(src);
                     }
                 }
@@ -1298,31 +1339,53 @@ async def _save_harvest(
     count: int,
     *,
     variations: list | None = None,
+    canvas_urls: list[str] | None = None,
+    canvas_baseline_ids: set[str] | None = None,
     upscaler: Any = None,
 ) -> tuple[list[str], list[str]]:
     """
-    Write up to `count` images from `harvest` to `data/outputs/<job_id>/`.
+    Write up to `count` images from `harvest` and live canvas to `data/outputs/<job_id>/`.
 
     Returns `(saved_relative_paths, problems)`.
 
-    Two source shapes, in preference order:
-
-    * `variations` — structured records pairing each variation's
-      `mediaGenerationId` with its bytes/URL. When an `upscaler` is provided the
-      record's id goes to Flow's server-side 2K upsampler first; on any failure
-      the record's render-resolution bytes are used (original-image fallback).
-    * the flat `harvest` — inline bytes first (they need no second request),
-      then URLs, order-preserved, so variation *n* on disk is variation *n* in
-      the response.
+    Prioritizes verified canvas cards (which mount in Flow's DOM as uncompressed full-res
+    renders), then structured variation records, then raw harvest URLs. If any source
+    fails (e.g. 403 on internal CDN URLs), it continues to alternative sources and performs
+    live canvas recovery so all variations are saved.
     """
     saved: list[str] = []
     problems: list[str] = []
 
+    sources: list[tuple[str, Any]] = []
+    seen_ids: set[str] = set()
+
+    # 1. Prioritize canvas URLs — these are verified rendered on Flow's canvas after submit (200 OK, ~940 KB full-res)
+    if canvas_urls:
+        for u in canvas_urls:
+            ident = media_identifier(u)
+            if ident not in seen_ids:
+                sources.append(("canvas", u))
+                seen_ids.add(ident)
+
+    # 2. Structured variation records (support 2K/4K upsampler if media_id present)
     if variations:
-        sources: list[tuple[str, Any]] = [("record", rec) for rec in variations]
-    else:
-        sources = [("inline", blob) for blob in harvest.inline]
-        sources += [("url", url) for url in harvest.urls]
+        for rec in variations:
+            ident = media_identifier(rec.url) if rec.url else (rec.media_id or "")
+            if not ident or ident not in seen_ids:
+                sources.append(("record", rec))
+                if ident:
+                    seen_ids.add(ident)
+
+    # 3. Inline blobs
+    for blob in harvest.inline:
+        sources.append(("inline", blob))
+
+    # 4. Network harvest URLs
+    for url in harvest.urls:
+        ident = media_identifier(url)
+        if ident not in seen_ids:
+            sources.append(("url", url))
+            seen_ids.add(ident)
 
     for kind, item in sources:
         if len(saved) >= count:
@@ -1359,6 +1422,38 @@ async def _save_harvest(
 
         saved.append(f"data/outputs/{job_id}/{out_path.name}")
         print(f"  💾 Variation #{index} (watermark removed & color graded): {out_path.name} ({out_path.stat().st_size // 1024} KB, {via})")
+
+    # 5. Live canvas recovery fallback if fewer than count were saved
+    if len(saved) < count and canvas_baseline_ids is not None:
+        print(f"🔍 [FLOW AUTOMATOR] Saved {len(saved)} of {count} so far. Checking canvas for remaining variations...")
+        for attempt in range(5):
+            if len(saved) >= count:
+                break
+            if attempt > 0:
+                await asyncio.sleep(2.0)
+            try:
+                fresh_canvas = await _get_canvas_media_urls(page)
+                fresh_new = [u for u in fresh_canvas if media_identifier(u) not in canvas_baseline_ids]
+                for u in fresh_new:
+                    if len(saved) >= count:
+                        break
+                    ident = media_identifier(u)
+                    if ident not in seen_ids:
+                        seen_ids.add(ident)
+                        body = await _fetch_media(page, u)
+                        if body:
+                            index = len(saved) + 1
+                            out_path = output_dir / f"flow_var_{index}.jpg"
+                            out_path.write_bytes(body)
+                            try:
+                                from app.services.anti_ai_processor import postprocess_image
+                                postprocess_image(out_path, skip_colab=True)
+                            except Exception as e:
+                                logger.warning("Anti-AI post-processing error on %s: %s", out_path, e)
+                            saved.append(f"data/outputs/{job_id}/{out_path.name}")
+                            print(f"  💾 Variation #{index} (from canvas recovery): {out_path.name} ({out_path.stat().st_size // 1024} KB, canvas recovery)")
+            except Exception as e:
+                logger.warning("Canvas recovery error on attempt %d: %s", attempt + 1, e)
 
     return saved, problems
 
@@ -1504,13 +1599,6 @@ async def generate_flow_batch_automated(job_id: str, prompt: str, count: int = 4
             raise
         print(f"📂 [FLOW AUTOMATOR] Workspace: {project_url}")
 
-        # Dual-layer baseline: snapshot all existing media images on the canvas.
-        # Flow renders generations directly onto the canvas cards, so diffing against
-        # this baseline lets us capture the exact new variations even if Google's
-        # internal RPC endpoints change protocol or obfuscate payloads.
-        canvas_baseline_urls = set(await _get_canvas_media_urls(page))
-        print(f"ℹ️ [FLOW AUTOMATOR] Project canvas currently shows {len(canvas_baseline_urls)} media image(s) (baseline snapshot).")
-
         watcher = _GenerationWatcher(page)
         watcher.attach()
 
@@ -1520,6 +1608,14 @@ async def generate_flow_batch_automated(job_id: str, prompt: str, count: int = 4
             watcher.detach()
             await _close_quietly(ctx)
             raise
+
+        # Dual-layer baseline: snapshot all existing media images on the canvas
+        # RIGHT BEFORE submit, after prompt entry and any reference image upload
+        # (40+ seconds). This guarantees all existing cards in this project workspace
+        # are captured in the baseline and will NEVER be mistaken for new variations.
+        canvas_baseline_urls = set(await _get_canvas_media_urls(page))
+        canvas_baseline_ids = {media_identifier(u) for u in canvas_baseline_urls}
+        print(f"ℹ️ [FLOW AUTOMATOR] Project canvas currently shows {len(canvas_baseline_urls)} existing media image(s) ({len(canvas_baseline_ids)} unique IDs, baseline snapshot before submit).")
 
         # Arm *after* the prompt is in the box and *before* the submit, so the only
         # requests and responses considered are answers to this submit.
@@ -1536,36 +1632,56 @@ async def generate_flow_batch_automated(job_id: str, prompt: str, count: int = 4
         deadline = asyncio.get_event_loop().time() + GENERATION_TIMEOUT_SECONDS
         started_at = asyncio.get_event_loop().time()
         first_media_at: float | None = None
+        all_network_at: float | None = None
+        canvas_new_urls: list[str] = []
         tick = 0
         while asyncio.get_event_loop().time() < deadline:
             await asyncio.sleep(1.5)
             tick += 1
             now = asyncio.get_event_loop().time()
+            elapsed_s = now - started_at
 
-            # Dual-layer check: poll canvas for newly appeared generated images
-            if watcher.harvest.total < count:
+            # Dual-layer check: poll canvas for newly appeared generated images.
+            # Google Flow renders take at least 15-20s. We do NOT poll canvas in the
+            # first 10s to guarantee no late-hydrating existing cards are captured as "new".
+            if elapsed_s >= 10:
                 current_canvas = await _get_canvas_media_urls(page)
-                new_on_canvas = [u for u in current_canvas if u not in canvas_baseline_urls]
+                new_on_canvas = [u for u in current_canvas if media_identifier(u) not in canvas_baseline_ids]
                 for u in new_on_canvas:
-                    if u not in watcher.harvest.urls:
-                        watcher.harvest.urls.append(u)
+                    ident = media_identifier(u)
+                    existing_ids = {media_identifier(existing) for existing in canvas_new_urls}
+                    if ident not in existing_ids:
+                        canvas_new_urls.append(u)
                         print(f"🖼️ [FLOW AUTOMATOR] Captured newly generated canvas variation: {u[:70]}...")
 
-            if watcher.harvest.total and first_media_at is None:
+            total_found = max(watcher.harvest.total, len(canvas_new_urls))
+            if total_found and first_media_at is None:
                 first_media_at = now
-            if watcher.harvest.total >= count:
+
+            # If all requested variations are confirmed on the canvas, proceed immediately!
+            if len(canvas_new_urls) >= count:
+                print(f"✅ [FLOW AUTOMATOR] All {count} requested variations verified on canvas!")
                 break
+
+            # If network captured all requested variations, wait up to 15s for the canvas cards to finish mounting
+            if watcher.harvest.total >= count:
+                if all_network_at is None:
+                    all_network_at = now
+                    print(f"📡 [FLOW AUTOMATOR] All {count} network responses received ({len(canvas_new_urls)}/{count} on canvas). Waiting for cards to mount...")
+                if len(canvas_new_urls) >= count or (now - all_network_at > 15):
+                    break
+
             # Flow answered, but with fewer than requested. Give the remaining
             # responses a grace window, then work with what it actually sent
             # rather than waiting out the full timeout.
-            if first_media_at is not None and now - first_media_at > 25:
-                print(f"ℹ️ [FLOW AUTOMATOR] Flow named {watcher.harvest.total} of {count} "
+            if first_media_at is not None and now - first_media_at > 35:
+                print(f"ℹ️ [FLOW AUTOMATOR] Flow named {total_found} of {count} "
                       "media in the grace window; proceeding with those.")
                 break
             # No generation request at all after a generous window means the submit
             # was accepted by the page but Flow never asked its backend to render.
             # Only give up if neither request was sent nor submit was confirmed by prompt clear.
-            if (not watcher.generation_requests and not watcher.harvest.total
+            if (not watcher.generation_requests and not total_found
                     and "confirmed by prompt bar cleared" not in clicked
                     and now - started_at > NO_REQUEST_GIVE_UP_SECONDS):
                 print("⚠️ [FLOW AUTOMATOR] No generation request left the browser in "
@@ -1583,12 +1699,13 @@ async def generate_flow_batch_automated(job_id: str, prompt: str, count: int = 4
                 elapsed = int(GENERATION_TIMEOUT_SECONDS - (deadline - now))
                 print(f"⏳ [FLOW AUTOMATOR] {elapsed}s elapsed"
                       + (f", Flow reports {progress}%" if progress else "")
-                      + f", {watcher.harvest.total} media named so far...")
+                      + f", {total_found} media named so far ({len(canvas_new_urls)} on canvas)...")
 
         await watcher.drain()
         watcher.detach()
 
-        if not watcher.harvest.total:
+        total_found = max(watcher.harvest.total, len(canvas_new_urls))
+        if not total_found:
             alerts = await _safe_eval(page, _JS_PAGE_ALERTS, what="read page alerts") or []
             await _debug_shot(page, f"flow_no_media_{job_id[:8]}")
             await _close_quietly(ctx)
@@ -1602,14 +1719,11 @@ async def generate_flow_batch_automated(job_id: str, prompt: str, count: int = 4
                 + f" | screenshot: data/debug/flow_no_media_{job_id[:8]}.png"
             )
 
-        print(f"📦 [FLOW AUTOMATOR] Flow named {watcher.harvest.total} media "
-              f"({len(watcher.harvest.inline)} inline, {len(watcher.harvest.urls)} URL, "
+        print(f"📦 [FLOW AUTOMATOR] Flow named {total_found} media "
+              f"({len(canvas_new_urls)} on canvas, {len(watcher.harvest.inline)} inline, {len(watcher.harvest.urls)} network URL, "
               f"{sum(1 for r in watcher.variations if r.media_id)} of {len(watcher.variations)} "
               f"variation records carry a media id). Downloading at full resolution...")
         if watcher.variations and not any(r.media_id for r in watcher.variations):
-            # Keys only — these payloads hold tokens and signed URLs. The
-            # outline exists so the NEXT run shows exactly where Flow put
-            # the mediaGenerationId (or that it never sent one).
             outline = " | ".join(dict.fromkeys(watcher.shapes))[:600] or "(no shapes captured)"
             print(f"⚠️ [FLOW AUTOMATOR] No mediaGenerationId found in the generation response(s). "
                   f"Key outline: {outline}")
@@ -1648,11 +1762,6 @@ async def generate_flow_batch_automated(job_id: str, prompt: str, count: int = 4
                     return await resp.json()
 
                 async def upscaler(media_id: str) -> bytes | None:  # noqa: F811 — intentional shadow
-                    # Try each id form (bare segment, then full resource
-                    # name): newer responses identify media by resource
-                    # name, and which form the upsampler stores is not
-                    # documented. A short wait between forms also covers the
-                    # on-demand upsampler racing generation completion.
                     candidates = media_id_candidates(media_id)
                     for attempt, candidate in enumerate(candidates, 1):
                         body = await upscale_to_bytes(
@@ -1678,6 +1787,8 @@ async def generate_flow_batch_automated(job_id: str, prompt: str, count: int = 4
         image_paths, problems = await _save_harvest(
             page, watcher.harvest, output_dir, job_id, count,
             variations=watcher.variations or None,
+            canvas_urls=canvas_new_urls or None,
+            canvas_baseline_ids=canvas_baseline_ids,
             upscaler=upscaler,
         )
 

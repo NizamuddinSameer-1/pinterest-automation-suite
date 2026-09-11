@@ -23,7 +23,20 @@ BROWSERS = [
 ]
 
 
+def clean_stale_locks(profile_dir: Path) -> None:
+    """Remove Chrome lock files to avoid 'Opening in existing browser session'."""
+    for lock in ["SingletonLock", "SingletonCookie", "SingletonSocket", "lockfile"]:
+        lock_file = profile_dir / lock
+        if lock_file.exists():
+            try:
+                lock_file.unlink()
+                print(f"🧹 Cleaned stale lock: {lock}")
+            except Exception:
+                pass
+
+
 def launch_visible_browser():
+    clean_stale_locks(PROFILE_DIR)
     browser_exe = None
     for path in BROWSERS:
         if Path(path).exists():

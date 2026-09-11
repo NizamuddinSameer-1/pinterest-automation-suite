@@ -10,6 +10,7 @@ Takes trend, product, scene context, and optionally the generated image itself:
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -315,9 +316,9 @@ async def generate_batch_pins_seo(
         )
         return [seo]
 
-    for idx, path in enumerate(paths, 1):
+    async def _generate_single_pin(idx: int, path: str) -> dict[str, Any]:
         try:
-            item_seo = await generate_pin_seo(
+            return await generate_pin_seo(
                 product=product,
                 scene=scene,
                 trend_label=trend_label,
@@ -328,11 +329,10 @@ async def generate_batch_pins_seo(
                 profile_id=profile_id,
                 keyword_pack=_pack_for(idx),
             )
-            results.append(item_seo)
         except Exception as e:
             logger.warning("Vision SEO generation failed for image %d (%s), trying fallback: %s", idx, path, e)
             try:
-                fallback_seo = await generate_pin_seo(
+                return await generate_pin_seo(
                     product=product,
                     scene=scene,
                     trend_label=trend_label,
@@ -343,10 +343,16 @@ async def generate_batch_pins_seo(
                     profile_id=profile_id,
                     keyword_pack=_pack_for(idx),
                 )
-                results.append(fallback_seo)
             except Exception as e2:
                 logger.error("Text fallback SEO also failed for image %d: %s", idx, e2)
                 raise PipelineStageError("pinterest_seo", f"SEO generation failed for variation {idx}: {e2}") from e2
+
+    tasks = [_generate_single_pin(idx, path) for idx, path in enumerate(paths, 1)]
+    raw_results = await asyncio.gather(*tasks, return_exceptions=True)
+    for idx, res in enumerate(raw_results, 1):
+        if isinstance(res, Exception):
+            raise PipelineStageError("pinterest_seo", f"SEO generation failed for variation {idx}: {res}") from res
+        results.append(res)
 
     return results
 

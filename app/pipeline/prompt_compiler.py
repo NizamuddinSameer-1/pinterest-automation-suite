@@ -198,8 +198,17 @@ def compile_prompt(
         return CompileResult(prompt="", warnings=warnings, is_valid=False)
 
     if not product_truth.get("must_preserve"):
-        warnings.append(CompileWarning("error", "Missing must_preserve in Product Truth. Cannot compile."))
-        return CompileResult(prompt="", warnings=warnings, is_valid=False)
+        from app.pipeline.visual_specs import derive_must_preserve
+        fallback = derive_must_preserve(
+            materials=product.get("materials"),
+            title=product.get("name") or "",
+        )
+        if fallback:
+            product_truth["must_preserve"] = fallback
+            warnings.append(CompileWarning("info", f"Auto-derived fallback must_preserve: {fallback}"))
+        else:
+            warnings.append(CompileWarning("error", "Missing must_preserve in Product Truth. Cannot compile."))
+            return CompileResult(prompt="", warnings=warnings, is_valid=False)
 
     # ── Product class ─────────────────────────────
     class_key = scene.get("product_class")
@@ -335,6 +344,13 @@ def compile_prompt(
         "natural focal falloff with organic lens depth and authentic ambient falloff."
     )
 
+    # 4b. FLOW VARIATION — class-specific direction from the Scene Director
+    # (scene_variation_matrix, six seeded axes). Only present on scenes directed
+    # after the matrix landed; older scenes skip this block with no behavior change.
+    var_keys = ("camera_angle", "lighting_setup", "color_grading",
+                "scene_environment", "style_aesthetic", "creative_context")
+    var_lines = [f"- {k}: {scene[k]}" for k in var_keys if scene.get(k)]
+
     # 5. ASSEMBLE SECTIONS
     sections = [
         scene_intro,
@@ -347,6 +363,11 @@ def compile_prompt(
         camera_block,
         lighting_block,
     ]
+    if var_lines:
+        sections.append(
+            "FLOW VARIATION — honour all six directed axes in the composition:\n"
+            + "\n".join(var_lines)
+        )
 
     if realism_dna.get("anti_studio") or realism_dna.get("anti_cinematic"):
         sections.append("Style: Authentic everyday lifestyle photograph, un-staged UGC, anti-studio, anti-cinematic.")

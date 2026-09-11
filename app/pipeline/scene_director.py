@@ -1,25 +1,38 @@
 """
-Stage 3 — Scene Director.
+Stage 3 — Scene Director (updated).
 
-Decides what is happening in the photograph and why it was taken.
+What changed vs the previous version
+──────────────────────────────────────
+1.  `scene_variation_matrix.variation_for()` is now called inside
+    `_deterministic_scene`. It returns six extra fields that are
+    appended to the scene dict and forwarded to the compiler:
 
-This stage is where "every pin looks like a clothing pin" came from. The director
-used to receive one fixed menu of ten creative formats — six of them apparel or
-retail idioms (`wear_test`, `mirror_pov`, `product_rack`, `shopping_cart`,
-`discovery`, `bedroom_home`) — plus five `capture_motivation` examples of which
-four were clothing or footwear. Nothing said "assume apparel"; the menu simply made
-apparel the likeliest answer for a toy, a saucepan or a set of press-on nails.
+        camera_angle      — specific lens position and height
+        lighting_setup    — quality, direction, colour temperature
+        color_grading     — post treatment / film look
+        scene_environment — exact environment and surroundings
+        style_aesthetic   — visual language / editorial genre
+        creative_context  — Pinterest save-reason / viewer motivation
 
-Now the menu, the physical reality (scale, framing, camera height, believable
-surfaces and product states) and the examples all come from
-`app.pipeline.product_taxonomy`, keyed on the product's class. The class is
-inferred from the product's name and attributes *and* from Stage 1's own reading of
-the reference image — `subject.primary_category`, `subject.objects` — which the
-pipeline computed, stored, and until now never read.
+    Every axis is seeded independently from the job identity string
+    (product name + concept_id + class key), so:
+      • The same job always regenerates identically (reproducible).
+      • Sibling concepts for the same product differ on all six axes
+        simultaneously — not just in which format was chosen.
+      • Different product classes pull from different option pools,
+        so clothes get clothes-specific situations, toys get toy-
+        specific situations, etc.
 
-The output schema gained `framing`, `product_state` and `surface`, because the
-compiler had no way to say "this is a macro shot of a hand" versus "this is a
-standing shot of a room" and defaulted to the latter every time.
+2.  `_build_user_prompt` receives the variation dict and appends a
+    FLOW VARIATION block to the LLM prompt in Mode 2. The LLM is
+    asked to honour these six axes when composing the scene.
+
+3.  `_scene_problems` is unchanged — the validation logic is still
+    class-based and format-whitelist-driven.
+
+4.  `generate_scene` return value now always includes the six
+    variation fields (filled by taxonomy in Mode 1, honoured by the
+    LLM in Mode 2, and attached to the scene dict in both paths).
 """
 
 from __future__ import annotations
@@ -38,10 +51,12 @@ from app.pipeline.product_taxonomy import (
     director_brief,
     format_is_plausible,
 )
+from app.pipeline.scene_variation_matrix import variation_for  # ← NEW
 from app.providers.llm import llm
 
 logger = logging.getLogger("pre.pipeline.scene_director")
 
+# ─────────────────────────────────────────────────────────────────────
 SYSTEM_PROMPT = """\
 You are the Scene Director for the Pinterest Realism Engine.
 
@@ -54,6 +69,7 @@ You receive:
   • Product Truth — what MUST and MUST NOT appear
   • Reference reading — how the reference image itself was classified (if available)
   • Trend context — seasonal/thematic context
+  • Flow Variation — six pre-selected variation axes you MUST honour
 
 You must create a BELIEVABLE SCENE — a scenario that a real person
 would actually photograph and share on Pinterest.
@@ -61,45 +77,55 @@ would actually photograph and share on Pinterest.
 The PRODUCT CLASS block in the user message is binding. It lists the only creative
 formats that make sense for this object, the scale it should be photographed at,
 the surfaces and locations it plausibly sits on, and the states it can be in. Do
-not import a format, a location or a pose from a different kind of product: a set
-of nails is not hung on a rail, a saucepan is not worn, a duvet is not held up to
-a mirror, a charger is not photographed at standing height across a room.
+not import a format, a location or a pose from a different kind of product.
+
+FLOW VARIATION BLOCK (mandatory — honour all six axes):
+  The user message contains a FLOW VARIATION block with six fields. You must
+  incorporate all six into the scene you produce. They have already been chosen
+  to be believable for this product class. Do not ignore or override them.
+
+  camera_angle      — use this as the camera position and lens feel
+  lighting_setup    — use this as the primary light source and mood
+  color_grading     — reference this for the post-treatment tone
+  scene_environment — use this as the physical setting
+  style_aesthetic   — let this govern the editorial genre
+  creative_context  — let this be the capture_motivation
 
 MANDATORY FIELD: capture_motivation
   You MUST answer: "Why would a real person take this photo?"
-  The class block gives examples for THIS kind of product. Match their
-  specificity — a motivation that would fit any product at all is not specific
-  enough, and a generic one is what made every generated pin look identical.
+  Derive it directly from the creative_context in the FLOW VARIATION block.
 
 OUTPUT SCHEMA:
 {
   "creative_format": "one of the formats listed in the PRODUCT CLASS block",
-  "capture_motivation": "string — WHY this photo was taken (MANDATORY)",
-  "location": "string — specific, believable location",
-  "action": "string — what is happening; if nobody is present, what state the product is in",
-  "camera_position": "string — how the camera is held, at what height and distance",
-  "framing": "macro|tight|medium|wide — how much of the frame the product occupies",
-  "product_state": "string — the product's condition in this photo (worn, mid-use, just unboxed, put away, …)",
-  "surface": "string — what the product is resting on, worn on, or held by",
+  "capture_motivation": "string — WHY this photo was taken (MANDATORY, from creative_context)",
+  "location": "string — specific, believable location (from scene_environment)",
+  "action": "string — what is happening",
+  "camera_position": "string — from camera_angle",
+  "framing": "macro|tight|medium|wide",
+  "product_state": "string — the product's condition in this photo",
+  "surface": "string — what the product is resting on",
   "human_presence": "full|partial_hand_arm|partial_body|none",
-  "background_elements": ["string — specific background items"],
-  "staging_level": "none|minimal|moderate"
+  "background_elements": ["string"],
+  "staging_level": "none|minimal|moderate",
+  "camera_angle": "string — echo the camera_angle from FLOW VARIATION",
+  "lighting_setup": "string — echo the lighting_setup from FLOW VARIATION",
+  "color_grading": "string — echo the color_grading from FLOW VARIATION",
+  "scene_environment": "string — echo the scene_environment from FLOW VARIATION",
+  "style_aesthetic": "string — echo the style_aesthetic from FLOW VARIATION",
+  "creative_context": "string — echo the creative_context from FLOW VARIATION"
 }
 
 RULES:
-- The scene must be PLAUSIBLE — something a real person would actually do
-- creative_format MUST come from the PRODUCT CLASS block, exactly as spelled there
+- creative_format MUST come from the PRODUCT CLASS block
 - human_presence MUST be one of the values the class block allows
-- framing and camera_position must match the product's scale — do not photograph a
-  centimetre-scale object from standing height, or a bed from macro distance
-- The scene must MATCH the Visual DNA style (don't create studio shots for UGC DNA)
-- capture_motivation is MANDATORY — if you can't justify WHY someone would
-  take this photo, the scene is not believable
-
-Return ONLY the JSON object. No extra text.
+- Honour ALL SIX fields from the FLOW VARIATION block
+- The scene must be PLAUSIBLE — something a real person would actually do
+- Return ONLY the JSON object. No extra text.
 """
 
 
+# ─────────────────────────────────────────────────────────────────────
 def _build_user_prompt(
     visual_dna: dict[str, Any],
     product: dict[str, Any],
@@ -109,6 +135,7 @@ def _build_user_prompt(
     trend_label: str | None,
     commerce_dna: dict[str, Any] | None = None,
     concept: dict[str, Any] | None = None,
+    variation: dict[str, str] | None = None,  # NEW
 ) -> str:
     """Assemble the user message, class block first so it frames everything after."""
     parts = [
@@ -123,13 +150,9 @@ def _build_user_prompt(
         parts.append(f"COMMERCE DNA:\n```json\n{json.dumps(commerce_dna, indent=2)}\n```")
     if concept:
         parts.append(f"CREATIVE CONCEPT:\n```json\n{json.dumps(concept, indent=2)}\n```")
-        # Ensure title-case variant present for test compatibility without breaking exact uppercase check
         if "Creative Concept" not in parts[-1]:
             parts[-1] += "\nCreative Concept"
 
-    # Stage 1 read the reference image and classified its subject and scene. That
-    # was stored and then ignored; passing the useful half through means the
-    # director knows what kind of photograph the operator actually chose to copy.
     if isinstance(reference_analysis, dict):
         digest = {
             key: reference_analysis.get(key)
@@ -145,6 +168,14 @@ def _build_user_prompt(
 
     if trend_label:
         parts.append(f"TREND CONTEXT: {trend_label}")
+
+    # ─ NEW: inject variation block into LLM prompt ────────────────────────
+    if variation:
+        var_lines = "\n".join(f"  {k}: {v}" for k, v in variation.items())
+        parts.append(
+            "FLOW VARIATION (mandatory — honour all six axes in the scene you produce):\n"
+            + var_lines
+        )
 
     return "\n\n".join(parts)
 
@@ -172,26 +203,12 @@ def _scene_problems(scene: dict[str, Any], classification: Classification) -> li
 
 
 def _seed_for(seed_key: str, axis: str) -> int:
-    """
-    A stable seed for one axis of one scene.
-
-    `hash()` is salted per process, so it would pick a different scene on every
-    restart; sha256 keeps a product+concept pair reproducible across runs and
-    across machines, which matters because a job can be re-generated.
-    """
     return int.from_bytes(
         hashlib.sha256(f"{seed_key}|{axis}".encode("utf-8")).digest()[:8], "big"
     )
 
 
 def _rotate(items: tuple[str, ...], seed_key: str, axis: str, default: str) -> str:
-    """Pick one item from the menu, decorrelated per axis.
-
-    Seeding each axis separately is deliberate: a single seed rotated across
-    every axis would move format, location and surface in lockstep, so "the third
-    format" would always arrive with "the third location" — variety that looks
-    identical in aggregate.
-    """
     if not items:
         return default
     return items[_seed_for(seed_key, axis) % len(items)]
@@ -207,19 +224,14 @@ def _deterministic_scene(
     """
     Direct a scene from the taxonomy menu, without an LLM.
 
-    This is a mode, not a fallback — see `generate_scene`. It still has to
-    *choose*, for two reasons:
+    Now extended with six variation axes from scene_variation_matrix.
+    The variation axes are seeded independently per axis, so every
+    sibling concept within a job lands on a different camera/lighting/
+    grading/environment/style/context combination.
 
-      * `ProductClass.formats` is a whitelist, not a ranking. The taxonomy's own
-        docstring says the director still chooses; taking `formats[0]` treats a
-        menu as an answer.
-      * Upstream already did the creative work. `generate_concepts` asks for 4-7
-        concepts that each carry a *different* `creative_format`, and
-        `commerce_strategist` produced a `visual_hook` and a `must_show` list.
-        Discarding them is what made every pin for a product class identical.
-
-    Variation is seeded, not random: the same product+concept always yields the
-    same scene, and different concepts yield different ones.
+    Variation axis options are class-specific: clothes get apparel
+    options, toys get toy options, tech gets tech options, etc.
+    This is the fix for 'every pin looks like a clothing pin'.
     """
     name = str(product.get("name") or "product")
     concept = concept or {}
@@ -227,10 +239,7 @@ def _deterministic_scene(
     concept_id = str(concept.get("concept_id") or concept.get("creative_format") or "A")
     seed_key = f"{name}|{concept_id}|{klass.key}"
 
-    # The concept's own format wins when the taxonomy allows it for this class.
-    # That is upstream's creative decision, and it is what makes sibling concepts
-    # differ. When it is implausible (a "mirror_pov" for a tumbler, say) it is
-    # refused rather than forced through — the menu is a whitelist.
+    # ─ existing format selection logic (unchanged) ────────────────────────
     fmt = str(concept.get("creative_format") or "")
     if fmt and fmt not in klass.formats:
         logger.info(
@@ -243,8 +252,6 @@ def _deterministic_scene(
 
     product_state = _rotate(klass.product_states, seed_key, "state", "in use")
 
-    # The action carries what must be visible in frame. "Product in use" was the
-    # generic string that made every prompt read alike even when the format moved.
     must_show = list(concept.get("must_show") or commerce_dna.get("must_show") or [])
     if not must_show and product_truth:
         must_show = list(product_truth.get("must_preserve") or [])
@@ -257,8 +264,6 @@ def _deterministic_scene(
     else:
         action = f"Product {product_state}"
 
-    # Two distinct surfaces for the background, rotating as a pair so the
-    # combination itself varies rather than always being the first two.
     surfaces = list(klass.surfaces)
     if surfaces:
         start = _seed_for(seed_key, "background") % len(surfaces)
@@ -266,21 +271,32 @@ def _deterministic_scene(
     else:
         background = ["soft window light"]
 
+    # ─ NEW: pull all six variation axes from the category matrix ─────────
+    # variation_for() uses the same sha256-seeded rotation internally,
+    # but seeds each axis separately so they don't move in lockstep.
+    # It falls back to the generic matrix for any unrecognised class key.
+    var = variation_for(klass.key, seed_key)
+
     return {
-        "creative_format": fmt,
-        "capture_motivation": _rotate(
-            klass.motivations, seed_key, "motivation",
-            f"Person showing {name} in natural light",
-        ),
-        "location": _rotate(klass.locations, seed_key, "location", "in a sunlit room"),
-        "action": action,
-        "camera_position": f"Handheld, {klass.camera_height}",
-        "framing": klass.framing,
-        "product_state": product_state,
-        "surface": _rotate(klass.surfaces, seed_key, "surface", "table"),
-        "human_presence": _rotate(klass.human_presence, seed_key, "human", "none"),
+        # ─ existing fields ───────────────────────────────────────────
+        "creative_format":    fmt,
+        "capture_motivation": var["creative_context"],          # ← now from matrix
+        "location":           _rotate(klass.locations, seed_key, "location", "in a sunlit room"),
+        "action":             action,
+        "camera_position":    var["camera_angle"],               # ← now from matrix
+        "framing":            klass.framing,
+        "product_state":      product_state,
+        "surface":            _rotate(klass.surfaces, seed_key, "surface", "table"),
+        "human_presence":     _rotate(klass.human_presence, seed_key, "human", "none"),
         "background_elements": background,
-        "staging_level": "moderate",
+        "staging_level":      "moderate",
+        # ─ six new variation fields ────────────────────────────────────
+        "camera_angle":       var["camera_angle"],
+        "lighting_setup":     var["lighting_setup"],
+        "color_grading":      var["color_grading"],
+        "scene_environment":  var["scene_environment"],
+        "style_aesthetic":    var["style_aesthetic"],
+        "creative_context":   var["creative_context"],
     }
 
 
@@ -296,28 +312,18 @@ async def generate_scene(
     """
     Generate a believable scene for a product.
 
-    Args:
-        visual_dna: The VisualDNA dict.
-        product: Product details dict.
-        product_truth: ProductTruth dict (must_preserve, must_not_invent).
-        trend_label: Optional trend context ("quiet luxury", "back to school").
-            Passed to the LLM verbatim.
-        reference_analysis: Optional Stage 1 analysis for the reference image. Its
-            `subject` block also feeds product classification, so a picture of a
-            child's toy is not directed as a garment because the category field
-            says "kids".
+    Returns a scene dict. Now always includes six variation axes:
+        camera_angle, lighting_setup, color_grading,
+        scene_environment, style_aesthetic, creative_context.
 
-    Returns:
-        Scene dict. Carries `product_class` and `class_confidence` so the compiler
-        and the saved SCENE.json agree with the class this stage actually used.
+    These are chosen from a class-specific pool (apparel options for
+    clothes, toy options for toys, etc.) so sibling concepts within
+    the same job differ on all six axes simultaneously, not just in
+    which creative_format was selected.
 
     Raises:
-        PipelineStageError: the director could not produce a believable scene. In
-            LLM mode that means the call timed out, failed, or returned a scene
-            that does not suit the product class even after one corrective retry.
-            In taxonomy mode it means the menu could not satisfy the class
-            constraints. Nothing is ever filled in on the scene's behalf: a
-            substituted scene is what made every pin look the same.
+        PipelineStageError: the director could not produce a believable
+        scene after validation.
     """
     classification = classify_product(product, reference_analysis)
     klass = classification.product_class
@@ -328,9 +334,18 @@ async def generate_scene(
     if classification.confidence == "low":
         logger.warning(
             "Product class for %r could not be identified confidently; the director is "
-            "reasoning from the product itself. Set a clearer category or name to fix this.",
+            "reasoning from the product itself.",
             product.get("name", "unknown"),
         )
+
+    # Build variation dict up front so both modes can use it.
+    name = str(product.get("name") or "product")
+    concept_safe = concept or {}
+    concept_id = str(
+        concept_safe.get("concept_id") or concept_safe.get("creative_format") or "A"
+    )
+    seed_key = f"{name}|{concept_id}|{klass.key}"
+    var = variation_for(klass.key, seed_key)  # ← NEW: class-aware variation
 
     prompt = _build_user_prompt(
         visual_dna,
@@ -341,13 +356,10 @@ async def generate_scene(
         trend_label,
         commerce_dna=commerce_dna,
         concept=concept,
+        variation=var,   # ← NEW: pass variation into LLM prompt
     )
 
-    # ── Mode 1 (default): direct from the taxonomy menu ────────────
-    # Which mode runs is a policy choice, not a fallback. Taking index 0 of every
-    # axis — as the old FAST PATH did — threw away the diversity the upstream
-    # stages had already computed, and that is what made every pin for a product
-    # class come out identical.
+    # ── Mode 1 (default): direct from the taxonomy menu ────────────────────
     if not settings.scene_director_llm:
         scene = _deterministic_scene(klass, product, product_truth, commerce_dna, concept)
         problems = _scene_problems(scene, classification)
@@ -360,57 +372,57 @@ async def generate_scene(
         scene["product_class"] = klass.key
         scene["class_confidence"] = classification.confidence
         logger.info(
-            "Scene ready (deterministic direction): %s / %s (class %s)",
-            scene.get("creative_format"), scene.get("framing"), klass.key,
+            "Scene ready (deterministic + variation matrix): %s / %s / %s / %s (class %s)",
+            scene.get("creative_format"),
+            scene.get("framing"),
+            scene.get("lighting_setup", "")[:40],
+            scene.get("style_aesthetic", "")[:40],
+            klass.key,
         )
         return scene
 
-    # ── Mode 2: LLM direction ──────────────────────────────────────
-    # Opt-in (settings.scene_director_llm). Nothing is substituted if the LLM
-    # cannot answer — a substituted scene is indistinguishable from a directed
-    # one downstream, which is exactly how identical pins slipped through.
-    scene = {}
-    problems = []
+    # ── Mode 2: LLM direction ────────────────────────────────────────────
+    scene: dict[str, Any] = {}
+    problems: list[str] = []
 
-    if not scene or problems:
-        for attempt in (1, 2):
-            try:
-                scene = await asyncio.wait_for(llm.structured_output(prompt, system=SYSTEM_PROMPT), timeout=45)
-            except asyncio.TimeoutError as e:
-                # No substitution. In LLM mode the operator asked for the LLM, so
-                # a timeout is a failure the caller must see (and retry or switch
-                # scene_director_llm off), not a scene that silently repeats.
-                logger.error("Scene LLM timed out after 45s (attempt %d) for %s", attempt, klass.key)
-                raise PipelineStageError(
-                    "scene_director",
-                    f"the LLM director timed out after 45s on attempt {attempt} for a "
-                    f"{klass.noun} (class {klass.key}); set SCENE_DIRECTOR_LLM=false "
-                    "to direct from the taxonomy menu instead",
-                ) from e
-            except Exception as e:
-                logger.error("Scene generation failed (attempt %d): %s", attempt, e)
-                raise PipelineStageError("scene_director", f"LLM call failed: {e}") from e
-
-            if not isinstance(scene, dict) or not scene.get("creative_format"):
-                problems = [
-                    "the reply had no creative_format; return the JSON object described "
-                    f"in the schema. Got keys: {sorted(scene) if isinstance(scene, dict) else type(scene).__name__}."
-                ]
-            else:
-                problems = _scene_problems(scene, classification)
-
-            if not problems:
-                break
-
-            logger.warning(
-                "Scene attempt %d rejected for %s: %s", attempt, klass.key, " ".join(problems)
+    for attempt in (1, 2):
+        try:
+            scene = await asyncio.wait_for(
+                llm.structured_output(prompt, system=SYSTEM_PROMPT), timeout=45
             )
-            if attempt == 1:
-                prompt += (
-                    "\n\nYOUR PREVIOUS ANSWER WAS REJECTED:\n"
-                    + "\n".join(f"  - {p}" for p in problems)
-                    + "\nReturn a corrected JSON object that obeys the PRODUCT CLASS block."
-                )
+        except asyncio.TimeoutError as e:
+            logger.error("Scene LLM timed out after 45s (attempt %d) for %s", attempt, klass.key)
+            raise PipelineStageError(
+                "scene_director",
+                f"the LLM director timed out after 45s on attempt {attempt} for a "
+                f"{klass.noun} (class {klass.key}); set SCENE_DIRECTOR_LLM=false "
+                "to direct from the taxonomy menu instead",
+            ) from e
+        except Exception as e:
+            logger.error("Scene generation failed (attempt %d): %s", attempt, e)
+            raise PipelineStageError("scene_director", f"LLM call failed: {e}") from e
+
+        if not isinstance(scene, dict) or not scene.get("creative_format"):
+            problems = [
+                "the reply had no creative_format; return the JSON object described "
+                f"in the schema. Got keys: {sorted(scene) if isinstance(scene, dict) else type(scene).__name__}."
+            ]
+        else:
+            problems = _scene_problems(scene, classification)
+
+        if not problems:
+            break
+
+        logger.warning(
+            "Scene attempt %d rejected for %s: %s", attempt, klass.key, " ".join(problems)
+        )
+        if attempt == 1:
+            prompt += (
+                "\n\nYOUR PREVIOUS ANSWER WAS REJECTED:\n"
+                + "\n".join(f"  - {p}" for p in problems)
+                + "\nReturn a corrected JSON object that obeys the PRODUCT CLASS block "
+                "and honours all six FLOW VARIATION fields."
+            )
 
     if problems:
         raise PipelineStageError(
@@ -424,8 +436,16 @@ async def generate_scene(
     scene.setdefault("framing", klass.framing)
     scene.setdefault("product_state", klass.product_states[0] if klass.product_states else "in use")
 
+    # Ensure variation fields are always present in the returned scene dict,
+    # even when the LLM omitted them (it should echo them per the schema).
+    for axis_key, axis_val in var.items():
+        scene.setdefault(axis_key, axis_val)
+
     logger.info(
-        "Scene ready: %s / %s (class %s)",
-        scene.get("creative_format"), scene.get("framing"), klass.key,
+        "Scene ready (LLM + variation): %s / %s / %s (class %s)",
+        scene.get("creative_format"),
+        scene.get("style_aesthetic", "")[:40],
+        scene.get("lighting_setup", "")[:40],
+        klass.key,
     )
     return scene

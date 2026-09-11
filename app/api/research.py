@@ -27,6 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.database import get_db
 from app.models.models import Job, Product, Reference, ReferenceAnalysis, VisualDNA
+from app.pipeline.visual_specs import derive_must_preserve
 from app.services.affiliate_router import build_smart_redirect_url
 from app.services.product_dedup import compute_dedup_key, find_existing
 from app.services.pinterest_trends_scraper import (
@@ -241,6 +242,15 @@ async def launch_campaign_from_trend(
         # Build smart redirect affiliate URL
         smart_url = body.affiliate_url or build_smart_redirect_url(asin=asin, title=body.title)
 
+        must_preserve = derive_must_preserve(title=body.title)
+        truth_dict = {
+            "title": body.title,
+            "category": body.category.title(),
+            "must_preserve": must_preserve,
+            "must_not_invent": [],
+            "allowed_scene_variations": [],
+        }
+
         product = Product(
             id=str(uuid4()),
             name=body.title,
@@ -251,6 +261,8 @@ async def launch_campaign_from_trend(
             price=body.price,
             currency="USD",
             category=body.category.title(),
+            key_attributes=json.dumps(must_preserve),
+            product_truth_json=json.dumps(truth_dict),
             product_image_path=image_path_str if img_dest.exists() else body.image_url,
             product_images_json=json.dumps([image_path_str]) if img_dest.exists() else None,
             availability="in_stock",
@@ -583,6 +595,14 @@ async def launch_inspo_campaign(
     if existing_product:
         product = existing_product
     else:
+        must_preserve = derive_must_preserve(title=clean_term.title())
+        truth_dict = {
+            "title": f"{clean_term.title()} (Viral Inspo Guide)",
+            "category": body.category.title(),
+            "must_preserve": must_preserve,
+            "must_not_invent": [],
+            "allowed_scene_variations": [],
+        }
         product = Product(
             id=str(uuid4()),
             name=f"{clean_term.title()} (Viral Inspo Guide)",
@@ -594,6 +614,8 @@ async def launch_inspo_campaign(
             price=0.0,
             currency="USD",
             category=body.category.title(),
+            key_attributes=json.dumps(must_preserve),
+            product_truth_json=json.dumps(truth_dict),
             product_image_path=body.preview_image_url,
             availability="in_stock",
         )
