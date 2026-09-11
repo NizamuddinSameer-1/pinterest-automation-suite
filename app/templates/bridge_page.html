@@ -3,6 +3,15 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  {#
+    Test/dev lookbooks must never be indexed. Setting this here (rather than
+    patching the generated files afterwards) is what makes it stick: the running
+    server regenerates lookbook HTML, and a post-hoc patch is silently reverted
+    on the next generation. See git_publisher.is_public_lookbook_slug.
+  #}
+  {% if robots_noindex %}
+  <meta name="robots" content="noindex, nofollow" />
+  {% endif %}
   <title>{{ title }} | SmartPickr Editorial</title>
   <meta name="description" content="{{ subheadline }}">
   <link rel="canonical" href="{{ canonical_url or affiliate_url }}">

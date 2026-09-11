@@ -135,3 +135,63 @@ class TestPublicLookbookSlugPolicy:
         from app.services.git_publisher import is_public_lookbook_slug
 
         assert is_public_lookbook_slug("") is False
+
+
+class TestTemplateEmitsNoindexForTestSlugs:
+    """
+    The noindex tag must be produced by the TEMPLATE, not patched onto files
+    afterwards.
+
+    A post-hoc patch was tried first and silently reverted: the running server
+    regenerates lookbook HTML, so the next generation wrote the files back
+    without the tag. Emitting it at render time is what makes the policy stick,
+    and it reuses the same `is_public_lookbook_slug` predicate as the catalog and
+    sitemap so all three can never disagree.
+    """
+
+    @staticmethod
+    def _render(**overrides) -> str:
+        from app.services.article_generator import jinja_env
+
+        ctx = dict(
+            title="T", headline="H", subheadline="S", product_name="P", brand="B",
+            price_display="$1", affiliate_url="u", canonical_url="c",
+            first_image_url="i", looks=[], hero_look=None, testing_badge="x",
+            comparison_matrix={}, ugc_narrative={}, fabric_deep_dive={},
+            pros_cons={}, buyer_persona={}, final_verdict={}, reading_time="4",
+            author_name="A", author_title="T", quick_verdict={}, tldr_card={},
+            story_intro="", objections_faq=[], staged_ctas={}, trust_badges=[],
+            related_lookbooks=[], product_data={}, year=2026,
+            site_base_url="https://h", date_iso="2026-09-11",
+        )
+        ctx.update(overrides)
+        return jinja_env.get_template("bridge_page.html").render(**ctx)
+
+    def _robots_tag(self, html: str) -> str:
+        head = html.split("<title>")[0]
+        return "noindex" if "noindex" in head else "indexable"
+
+    def test_noindex_flag_produces_the_tag(self):
+        assert self._robots_tag(self._render(robots_noindex=True)) == "noindex"
+
+    def test_flag_off_leaves_page_indexable(self):
+        assert self._robots_tag(self._render(robots_noindex=False)) == "indexable"
+
+    def test_missing_flag_defaults_to_indexable(self):
+        """Backward compatible: an older caller that omits the flag is unaffected."""
+        assert self._robots_tag(self._render()) == "indexable"
+
+    def test_flag_is_derived_from_the_shared_slug_policy(self):
+        from app.services.git_publisher import is_public_lookbook_slug
+
+        cases = {
+            "early-september-nails-viral-inspo-guide-4146d8b2": "indexable",
+            "maid-costume-87a5f232": "indexable",
+            "test-tldr-render": "noindex",
+            "job1": "noindex",
+            "reference-product-88729bb1": "noindex",
+            "classic-cast-iron-skillet-test-com": "noindex",
+        }
+        for slug, expected in cases.items():
+            html = self._render(robots_noindex=not is_public_lookbook_slug(slug))
+            assert self._robots_tag(html) == expected, slug

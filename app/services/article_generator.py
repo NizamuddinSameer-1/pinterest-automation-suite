@@ -286,6 +286,9 @@ async def generate_lookbook_html(
 
     # 6. Render Jinja2 Template
     default_author = getattr(settings, "site_author_name", "SmartPickr Editorial Team")
+    # Imported locally to avoid a module-level cycle with git_publisher.
+    from app.services.git_publisher import is_public_lookbook_slug
+
     template = jinja_env.get_template("bridge_page.html")
     html_content = template.render(
         title=copy_data.get("headline", product_data.get("name", "Curated Guide")),
@@ -322,6 +325,9 @@ async def generate_lookbook_html(
         # a real publication date. A generated review page is published now.
         site_base_url=f"https://{live_domain}",
         date_iso=datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d"),
+        # Test/dev slugs are rendered with a noindex robots tag so they can never
+        # be indexed, however many times they are regenerated.
+        robots_noindex=not is_public_lookbook_slug(slug),
     )
 
     # 7. Save locally to disk
