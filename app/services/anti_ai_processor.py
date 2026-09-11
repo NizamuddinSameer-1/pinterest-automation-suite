@@ -149,7 +149,7 @@ def postprocess_image(
             # Step 3: Watermark Crop
             w, h = img.size
             crop_px = crop_bottom_px if crop_bottom_px is not None else _auto_crop_px(h)
-            if h > crop_px + 100:
+            if crop_px > 0 and h > crop_px + 100:
                 img = img.crop((0, 0, w, h - crop_px))
                 w, h = img.size
 

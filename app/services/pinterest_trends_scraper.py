@@ -1791,7 +1791,7 @@ async def get_trend_deep_dive(term: str, country: str = "US", force_refresh: boo
     elif "halloween" in t:
         description = (
             "Halloween searches begin peaking 45 days early on Pinterest. Pinners look for understated spooky chic: "
-            "classy ghost nail art, matte velvet pumpkin textures, and dark celestial spiderwebs designed to wear all October long."
+             "classy ghost nail art, matte velvet pumpkin textures, and dark celestial spiderwebs designed to wear all October long."
         )
     else:
         description = (

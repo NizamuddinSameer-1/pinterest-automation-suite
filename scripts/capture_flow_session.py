@@ -58,30 +58,49 @@ async def main():
 
             url = request.url
             method = request.method
-            post_data = request.post_data
+            if method != "POST":
+                return
+
+            # Skip telemetry / analytics / logging endpoints that may send compressed binary payloads
+            skip_endpoints = [
+                "batchLogFrontendEvents",
+                "fetchUserRecommendations",
+                "checkAppAvailability",
+                "play.google.com",
+                "google-analytics",
+                "stats",
+                "telemetry",
+            ]
+            if any(skip in url for skip in skip_endpoints):
+                return
+
+            # Safely extract post_data (prevents UnicodeDecodeError on gzip/protobuf payloads)
+            try:
+                post_data = request.post_data
+            except Exception:
+                post_data = None
+
+            if not post_data:
+                return
 
             # Target Google image generation endpoints (ImageFX / Vertex / Gemini / Labs endpoints)
             is_gen_endpoint = any(kw in url for kw in [
                 "runImageFx",
-                "aisandbox-pa.googleapis.com",
-                "generativelanguage.googleapis.com",
+                "batchGenerateImages",
                 "generateImages",
+                "generateImage",
+                ":generate",
                 "predict",
                 "image-fx",
-                "labs.google/api",
+                "flowMedia",
                 "imagen",
             ])
 
-            if method == "POST" and post_data and (is_gen_endpoint or "prompt" in post_data.lower() or "userinput" in post_data.lower() or "contents" in post_data.lower()):
+            has_prompt_payload = any(kw in post_data.lower() for kw in ["prompt", "userinput", "contents", "instances"])
+
+            if is_gen_endpoint or has_prompt_payload:
                 try:
                     headers = await request.all_headers()
-                    # Chrome talks HTTP/2, so Playwright reports the request line
-                    # as the pseudo-headers :authority/:method/:path/:scheme.
-                    # httpx replays over HTTP/1.1 and h11 rejects any name that
-                    # starts with ':' — writing them into the capture is what
-                    # produced `Illegal header name b':authority'` on every
-                    # replay. They duplicate the URL, so drop them here too and
-                    # not only at replay time.
                     clean_headers = {
                         k: v for k, v in headers.items()
                         if not k.startswith(":")
@@ -105,33 +124,41 @@ async def main():
             if captured_event.is_set():
                 return
 
-            req = response.request
             url = response.url
+            if any(skip in url for skip in ["batchLogFrontendEvents", "fetchUserRecommendations", "checkAppAvailability", "telemetry"]):
+                return
 
-            is_gen_endpoint = any(kw in url for kw in [
-                "runImageFx",
-                "aisandbox-pa.googleapis.com",
-                "generativelanguage.googleapis.com",
-                "generateImages",
-                "predict",
-                "image-fx",
-                "labs.google/api",
-                "imagen",
-            ])
-
-            if req.method == "POST" and (is_gen_endpoint or "captured_session" in locals()):
+            req = response.request
+            if req.method == "POST" and response.status == 200:
                 try:
-                    if response.status == 200:
-                        content_type = response.headers.get("content-type", "")
-                        if "application/json" in content_type:
-                            res_json = await response.json()
-                            res_text = json.dumps(res_json)
-                            # Check if response contains image markers
-                            if any(marker in res_text for marker in ["image", "encodedImage", "inlineData", "bytesBase64Encoded", "imageUri", "media"]):
-                                captured_session["sample_response_keys"] = list(res_json.keys()) if isinstance(res_json, dict) else []
-                                if "url" in captured_session:
-                                    captured_event.set()
-                                    print("\n[SUCCESS] Captured complete request + successful image response payload!")
+                    content_type = response.headers.get("content-type", "")
+                    if "application/json" in content_type:
+                        res_json = await response.json()
+                        res_text = json.dumps(res_json)
+                        # Check if response contains image markers
+                        if any(marker in res_text for marker in ["image", "encodedImage", "inlineData", "bytesBase64Encoded", "imageUri", "media"]):
+                            if "url" not in captured_session:
+                                try:
+                                    headers = await req.all_headers()
+                                    captured_session["url"] = req.url
+                                    captured_session["method"] = req.method
+                                    captured_session["headers"] = {
+                                        k: v for k, v in headers.items()
+                                        if not k.startswith(":")
+                                        and k.lower() not in ["content-length", "host", "connection", "accept-encoding"]
+                                    }
+                                    captured_session["captured_at"] = time.time()
+                                    try:
+                                        p_data = req.post_data
+                                        captured_session["json_payload"] = json.loads(p_data) if p_data else {}
+                                    except Exception:
+                                        captured_session["raw_payload"] = req.post_data
+                                except Exception:
+                                    pass
+                            captured_session["sample_response_keys"] = list(res_json.keys()) if isinstance(res_json, dict) else []
+                            if "url" in captured_session:
+                                captured_event.set()
+                                print("\n[SUCCESS] Captured complete request + successful image response payload!")
                 except Exception:
                     pass
 
@@ -143,10 +170,10 @@ async def main():
 
         print("\nWaiting for you to generate an image in Google Flow...")
         try:
-            # Wait up to 5 minutes for generation
-            await asyncio.wait_for(captured_event.wait(), timeout=300.0)
+            # Wait up to 15 minutes for generation
+            await asyncio.wait_for(captured_event.wait(), timeout=900.0)
         except asyncio.TimeoutError:
-            print("\n[TIMEOUT] Generation was not triggered within 5 minutes.")
+            print("\n[TIMEOUT] Generation was not triggered within 15 minutes.")
 
         if "url" in captured_session:
             SESSION_FILE.write_text(json.dumps(captured_session, indent=2), encoding="utf-8")
@@ -154,18 +181,30 @@ async def main():
             print("🎉 Captured Google Flow request saved to:")
             print(f"📁 {SESSION_FILE}")
             print("=" * 70)
-            print("⏳ This capture is SHORT-LIVED. It carries a Google OAuth token")
-            print("   (~1 hour) and a reCAPTCHA token that is effectively single-use,")
-            print("   and neither can be refreshed without a browser. The flow_api")
-            print("   backend refuses a capture older than 15 minutes rather than")
-            print("   spending a 90-second request on a rejection.")
-            print("   For repeatable generation use the flow_ui backend, which signs in")
-            print("   from data/flow_profile and does not expire.")
+            print("✅ Google Flow session and API tokens successfully captured!")
+            print("🖼️  The browser is staying open so your image can finish generating and rendering.")
+            print("👉 You can admire your generated image in the browser window.")
+            print("👉 When you are done, press [ENTER] in this terminal or simply close the browser.")
+            print("=" * 70)
+
+            # Keep the browser open until the user presses ENTER or closes the window
+            try:
+                loop = asyncio.get_running_loop()
+                await loop.run_in_executor(None, input, "\nPress ENTER when you are done to close the browser...")
+            except Exception:
+                await asyncio.sleep(45)
         else:
             print("\n[WARN] No generation request was captured. Please try again.")
+            try:
+                loop = asyncio.get_running_loop()
+                await loop.run_in_executor(None, input, "\nPress ENTER to close the browser...")
+            except Exception:
+                await asyncio.sleep(15)
 
-        await asyncio.sleep(2)
-        await browser_context.close()
+        try:
+            await browser_context.close()
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":

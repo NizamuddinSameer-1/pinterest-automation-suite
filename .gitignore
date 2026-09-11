@@ -62,3 +62,6 @@ frontend/vite.config.ts.timestamp-*
 .claude/
 vault/02 - Bugs & Issues/_Archive - Auto Bugs/
 .superpowers/
+*.log
+scratch_log.txt
+scratch/downloaded_flow/

@@ -608,28 +608,28 @@ class UnifiedLLMProvider:
         errors: list[str] = []
         if self._openrouter:
             try:
-                return await asyncio.wait_for(self._openrouter.analyze_image(prompt, image_path, system, temperature=temperature), timeout=45)
+                return await asyncio.wait_for(self._openrouter.analyze_image(prompt, image_path, system, temperature=temperature), timeout=20)
             except asyncio.TimeoutError as e:
-                errors.append(f"OpenRouter vision: timeout 45s")
-                logger.warning("OpenRouter vision timed out (45s): %s", e)
+                errors.append(f"OpenRouter vision: timeout 20s")
+                logger.warning("OpenRouter vision timed out (20s): %s", e)
             except Exception as e:
                 errors.append(f"OpenRouter vision: {e}")
                 logger.warning("OpenRouter Vision provider failed: %s. Trying fallback...", e)
         if self._gemini:
             try:
-                return await asyncio.wait_for(self._gemini.analyze_image(prompt, image_path, system, temperature=temperature), timeout=30)
+                return await asyncio.wait_for(self._gemini.analyze_image(prompt, image_path, system, temperature=temperature), timeout=15)
             except asyncio.TimeoutError as e:
-                errors.append(f"Gemini vision: timeout 30s")
-                logger.warning("Gemini vision timed out (30s): %s", e)
+                errors.append(f"Gemini vision: timeout 15s")
+                logger.warning("Gemini vision timed out (15s): %s", e)
             except Exception as e:
                 errors.append(f"Gemini vision: {e}")
                 logger.warning("Gemini Vision provider failed: %s. Trying fallback...", e)
         if self._opencode:
             try:
-                return await asyncio.wait_for(self._opencode.analyze_image(prompt, image_path, system, temperature=temperature), timeout=30)
+                return await asyncio.wait_for(self._opencode.analyze_image(prompt, image_path, system, temperature=temperature), timeout=15)
             except asyncio.TimeoutError as e:
-                errors.append(f"OpenCode vision: timeout 30s")
-                logger.warning("OpenCode vision timed out: %s", e)
+                errors.append(f"OpenCode vision: timeout 15s")
+                logger.warning("OpenCode vision timed out (15s): %s", e)
             except Exception as e:
                 errors.append(f"OpenCode: {e}")
                 logger.warning("OpenCode vision fallback failed: %s", e)

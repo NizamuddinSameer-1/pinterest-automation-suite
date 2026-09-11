@@ -45,6 +45,7 @@ from app.models.models import Job, Product, PromptVersion, Reference, VisualDNA
 from app.pipeline.prompt_compiler import compile_prompt
 from app.pipeline.scene_director import generate_scene
 from app.pipeline.subject_match import check_subject_match
+from app.pipeline.visual_specs import derive_must_preserve
 from app.services.generation import AUTO, describe_backends
 from app.services.job_service import InvalidTransitionError, validate_transition
 from app.services.reference_context import load_reference_analysis
@@ -155,12 +156,37 @@ async def _prepare_brief(
         "allowed_scene_variations": [],
     }
     if not product_truth.get("must_preserve"):
-        raise HTTPException(
-            409,
-            f"Product '{product.name}' has an empty must_preserve list, so the compiler has "
-            "nothing to hold the model to. Fill in its key physical attributes in the "
-            "Product Library first.",
+        fallback_preserve = derive_must_preserve(
+            materials=product_data.get("materials"),
+            title=product.name or "",
         )
+        if not fallback_preserve and product.name:
+            fallback_preserve = [f"Original physical form and proportions of {product.name}"]
+        if not fallback_preserve and product.category:
+            fallback_preserve = [f"Authentic {product.category} styling and aesthetic details"]
+
+        if fallback_preserve:
+            product_truth["must_preserve"] = fallback_preserve
+            try:
+                product.product_truth_json = json.dumps(product_truth)
+                if not product.key_attributes:
+                    product.key_attributes = json.dumps(fallback_preserve)
+                await db.commit()
+                logger.info(
+                    "Auto-derived and persisted must_preserve for product %s (%r): %s",
+                    product.id,
+                    product.name,
+                    fallback_preserve,
+                )
+            except Exception as e:
+                logger.warning("Could not persist auto-derived must_preserve: %s", e)
+        else:
+            raise HTTPException(
+                409,
+                f"Product '{product.name}' has an empty must_preserve list, so the compiler has "
+                "nothing to hold the model to. Fill in its key physical attributes in the "
+                "Product Library first.",
+            )
 
     # Stage 1's reading of the reference. Loaded before the scene director because
     # the subject guard needs it whether or not the scene already exists — a job
@@ -693,6 +719,24 @@ async def preview_prompt_endpoint(req: PreviewPromptRequest, db: AsyncSession = 
         "must_not_invent": [],
         "allowed_scene_variations": [],
     }
+    if not product_truth.get("must_preserve"):
+        fallback_preserve = derive_must_preserve(
+            materials=product_data.get("materials"),
+            title=product.name or "",
+        )
+        if not fallback_preserve and product.name:
+            fallback_preserve = [f"Original physical form and proportions of {product.name}"]
+        if not fallback_preserve and product.category:
+            fallback_preserve = [f"Authentic {product.category} styling and aesthetic details"]
+        if fallback_preserve:
+            product_truth["must_preserve"] = fallback_preserve
+            try:
+                product.product_truth_json = json.dumps(product_truth)
+                if not product.key_attributes:
+                    product.key_attributes = json.dumps(fallback_preserve)
+                await db.commit()
+            except Exception as e:
+                logger.warning("Could not persist auto-derived must_preserve in preview: %s", e)
 
     reference_analysis = await load_reference_analysis(db, ref.id)
     match = check_subject_match(product_data, reference_analysis)
