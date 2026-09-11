@@ -491,20 +491,86 @@ catalogue) and were reported for review rather than silently rewritten.
 > at the old URLs. Each of the 6 must be edited on Pinterest (or deleted and
 > republished) before the fix is live. **This is the remaining P0 action.**
 
-### 11.6 New finding: `.env` is missing
-There is no `.env` file. The app runs entirely on `config.py` defaults, so every
-documented setting in `CONTEXT_FOR_AI.md` §8 (LLM keys, Flow project URLs, Vercel
-token, git remote, `LOOKBOOK_GIT_AUTO_PUSH`) is absent. This is very likely why
-the 9 lookbook pages were generated locally but never pushed — the auto-push
-path had no remote or token configured.
+### 11.6 `.env` was missing — recovered, and it explains the 404s ✅
+There was no `.env` at all. It turned out to be recoverable from git history
+(commit `856bffe`, 37 keys, 68 lines) — and it had **never been pushed** to any
+remote, so no secret was publicly exposed.
 
-**This is now the highest-priority follow-up**: without it, newly generated
-lookbooks will keep accumulating locally instead of deploying.
+**This was the actual root cause of the 9 dead destinations.** With no `.env`:
 
-### 11.7 Still open (P1)
-- `aggregateRating` fabricated `reviewCount: 100` in `bridge_page.html`
-- Missing `Article` / `BreadcrumbList` / `Person` schema
-- `nail inspoo` typo + hardcoded `2026` years in the trend keyword families
+1. `vercel_api_token` was empty, so `vercel_publisher` skipped the REST deploy
+   path and fell back to git.
+2. `lookbook_git_remote` was empty, so there was nothing to push to.
+3. Even with a remote set, the URL is plain `https://github.com/...` with **no
+   credential helper and no stored credential** on this machine — `git push`
+   fails with `could not read Username ... terminal prompts disabled`.
+
+So every generation after the `.env` was lost produced a lookbook on disk that
+silently never deployed, while the pin still recorded the intended URL.
+
+Restored and verified — the app now resolves:
+
+| Setting | Value |
+|---|---|
+| `bridge_domain` | `pinterest-lookbooks-beta.vercel.app` |
+| `vercel_api_token` | set, **validated against the Vercel API** |
+| `vercel_project_name` | `pinterest-lookbooks` (`prj_40UsCZ54Jm2TcIRSqNy9waOYwNRv`) |
+| `lookbook_git_remote` | `github.com/NizamuddinSameer-1/pinterest-lookbooks.git` |
+| `lookbook_git_auto_push` | `true` |
+| Amazon tags | US `nizamuddinsam-20` · IN `nizamuddins0a-21` |
+| `flow_project_urls` | 10 workspaces |
+| LLM keys | OpenRouter, Gemini, Content-OpenRouter, Content-NVIDIA all set |
+
+**Confirmed via the Vercel API:** the `pinterest-lookbooks` project has exactly
+one domain — `pinterest-lookbooks-beta.vercel.app`. The similar-looking
+`pinterest-lookbooks.vercel.app` belongs to a *different* project, which is why
+it has no sitemap and 404s on lookbook paths. The `config.py` default set in
+11.4 matches the project's real domain.
+
+> ⚠️ **Still to fix:** the git remote needs a token URL
+> (`https://<PAT>@github.com/...`) or a credential helper, otherwise the git
+> leg of the deploy keeps failing. The Vercel REST leg now works on its own,
+> since the token is restored.
+
+> 🔐 **Security note:** the `.env` (API keys, PA-API secret, Vercel token)
+> still sits in the history of 6 local branches — `master`,
+> `feat/trend-radar-v2`, `stable/prompt-only-flow`, and 4 `claude/*` branches.
+> None are pushed today, but pushing any of them would publish every secret.
+> Consider rotating the keys and rewriting those branches.
+
+### 11.7 Stopped fabricating ratings, added Article + BreadcrumbList ✅
+`app/templates/bridge_page.html`
+
+- **`aggregateRating` no longer fabricated.** It read
+  `product_data.get('review_count', 100)`, so any product with a `star_rating`
+  automatically claimed a 100-review corpus that did not exist — and the rating
+  value is LLM-derived, not measured. That is a Google structured-data policy
+  breach with manual-action risk. Now emitted **only** when a real rating *and*
+  a real review count are both present.
+- **Added `Article`** — headline, description, image,
+  `datePublished`/`dateModified`, `Person` author (name + jobTitle),
+  `Organization` publisher, and an `about` Product reference. This is the
+  E-E-A-T signal a review article needs and it was entirely absent.
+- **Added `BreadcrumbList`** (Home › Reviews › article).
+- Headline and product strings now use Jinja's `tojson` filter instead of raw
+  interpolation, so a quote in a title can no longer break the JSON-LD block.
+
+`@graph` is now `Product + Article + BreadcrumbList + FAQPage`.
+8 new tests in `tests/test_lookbook_structured_data.py`, including a guard that
+`star_rating` without `review_count` does not invent a count.
+
+### 11.8 `.env.example` hardened ✅
+Set `BRIDGE_DOMAIN=pinterest-lookbooks-beta.vercel.app` (it was blank, which is
+exactly how the wrong host got baked into canonicals), and documented that a
+plain `https://github.com/...` remote **cannot** push non-interactively, with the
+token-URL alternative spelled out.
+
+### 11.9 Still open (P1)
+- **Edit the 6 repointed pins on Pinterest** (Pinterest stores the destination
+  on the pin, so the DB fix alone is not live)
+- Git remote token URL, or the git deploy leg keeps failing
+- Rotate secrets + scrub `.env` from the 6 local branch histories
+- `"nail inspoo"` typo + hardcoded `2026` years in the trend keyword families
 - 40/66 pins share an identical description
 - Real domain to replace `*-beta.vercel.app`
 - 12 FAILED jobs; critiques = 2 vs 101 outputs
