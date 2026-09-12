@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import base64
 import datetime
+import html as html_lib
 import io
 import logging
 import re
@@ -78,10 +79,61 @@ def _image_to_data_uri(image_path: str | Path, max_width: int = 640, quality: in
     return f"data:image/webp;base64,{b64_str}"
 
 
+def _clean_scraped_text(raw: str, max_len: int = 120) -> str:
+    """
+    Normalise text scraped out of an already-rendered lookbook page.
+
+    Two separate corruptions have to be undone here:
+
+    1. Runaway entity escaping. Titles and categories are read from the raw
+       bytes of a previously rendered page, which Jinja had already
+       autoescaped. Feeding that value back through the template escapes the
+       `&` a second time, so `Style & Wear Tests` degrades to
+       `Style &amp;amp;amp;...amp; Wear Tests` and doubles again on every
+       regeneration. After ~25 runs the category becomes a ~250-character
+       token with no spaces in it. Because a CSS grid track defaults to a
+       `min-content` floor, that one token forced `.cluster-grid` to 1684px
+       inside a 375px viewport and gave the entire page horizontal scroll on
+       every device — desktop included. Unescaping to a fixed point collapses
+       however many rounds have accumulated.
+    2. Stray markup, since `<title>` bodies can carry tags or comments.
+
+    The length cap is the belt-and-braces guard: a pathological value must
+    never be able to dictate the layout again.
+    """
+    if not raw:
+        return ""
+    text = str(raw)
+    # Fixed-point unescape: collapses however many rounds of escaping have
+    # accumulated. Each regeneration roughly doubles the `&` count, so a string
+    # that has been round-tripped ~25 times needs ~25 passes. Unescaping always
+    # strictly reduces the entity count, so this terminates; the cap is only a
+    # guard against a pathological input.
+    for _ in range(64):
+        unescaped = html_lib.unescape(text)
+        if unescaped == text:
+            break
+        text = unescaped
+    text = re.sub(r"<[^>]+>", " ", text)
+    # The corruption turns one literal `&` into a run of `&amp;` pairs, which
+    # unescapes to a wall of adjacent ampersands (`Style &&&&&& Wear Tests`).
+    # Collapse those runs back to the single ampersand that was meant. This only
+    # touches *adjacent* ampersands, so a legitimate "Tom & Jerry & Co" survives.
+    text = re.sub(r"(?:\s*&\s*){2,}", " & ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    if len(text) > max_len:
+        text = text[:max_len].rsplit(" ", 1)[0] or text[:max_len]
+    return text.strip()
+
+
 def _discover_related_lookbooks(current_slug: str, current_category: str = "") -> list[dict[str, str]]:
     """
     Scan data/lookbooks/ directory to discover existing articles for reciprocal internal linking.
     Returns 2-3 clean related lookbook dictionary objects with title, URL, and category.
+
+    Every scraped field is passed through `_clean_scraped_text` — without it the
+    titles/categories inherit the escaping bug described there and wreck the
+    responsive layout of the page they are rendered into.
     """
     lookbooks_dir = settings.lookbooks_path
     if not lookbooks_dir.exists():
@@ -97,20 +149,30 @@ def _discover_related_lookbooks(current_slug: str, current_category: str = "") -
         # Ignore index, uuid raw outputs, or current page
         if slug in seen_slugs or len(slug) == 36 and "-" in slug and slug.count("-") == 4:
             continue
-        
+
         # Read title from file if possible
         try:
             content = f.read_text(encoding="utf-8", errors="ignore")
-            title_match = re.search(r"<title>(.*?)</title>", content, re.IGNORECASE)
-            title = title_match.group(1).split("|")[0].strip() if title_match else slug.replace("-", " ").title()
-            
-            cat_match = re.search(r'class="cluster-cat">(.*?)</div>', content)
-            category = cat_match.group(1).strip() if cat_match else "Curated Guide"
+            title_match = re.search(r"<title>(.*?)</title>", content, re.IGNORECASE | re.DOTALL)
+            raw_title = (
+                title_match.group(1).split("|")[0] if title_match
+                else slug.replace("-", " ").title()
+            )
+            title = _clean_scraped_text(raw_title, max_len=90)
+
+            cat_match = re.search(r'class="cluster-cat">(.*?)</div>', content, re.DOTALL)
+            category = _clean_scraped_text(
+                cat_match.group(1) if cat_match else "Curated Guide", max_len=40
+            )
+
+            # A page with no recoverable title is not a useful link target.
+            if not title:
+                continue
 
             related.append({
                 "slug": slug,
                 "title": title,
-                "category": category,
+                "category": category or "Curated Guide",
                 "url": f"/{slug}.html",
                 "local_url": f"/lookbooks/{slug}",
             })

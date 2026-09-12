@@ -7,7 +7,7 @@ tags:
   - moc
   - index
 created: 2026-08-20
-updated: 2026-08-29
+updated: 2026-09-11
 ---
 # 🚀 Pinterest Realism Engine — Knowledge & Telemetry Vault
 
@@ -19,18 +19,18 @@ generator.
 
 ## 📊 Live system metrics
 
-| Metric          | Count | Notes                                                                                        |
-| --------------- | ----- | -------------------------------------------------------------------------------------------- |
-| Campaigns       | `1`   |                                                                                              |
-| Products        | `49`  | includes Amazon PA-API ingestions                                                            |
-| References      | `95`  |                                                                                              |
-| Generation jobs | `82`  | `19` draft · `19` output_uploaded · `12` analyzed · `12` pass · `11` failed · `9` generating |
-| Job outputs     | `115` | generated variation images                                                                   |
-| Pin drafts      | `114` | `96` draft · `15` published · `3` scheduled                                                  |
-| Critiques       | `2`   | quality gate is under-used                                                                   |
-| Vault notes     | `393` | across 19 folders                                                                            |
+| Metric | Count | Notes |
+|---|---|---|
+| Campaigns | `1` | |
+| Products | `26` | includes Amazon PA-API ingestions |
+| References | `131` | |
+| Generation jobs | `48` | `27` output_uploaded · `12` failed · `4` draft · `2` analyzed · `2` prompt_ready · `1` pass |
+| Job outputs | `101` | generated variation images |
+| Pin drafts | `66` | `55` draft · `11` published |
+| Critiques | `2` | quality gate is under-used |
+| Vault notes | `994` | across 23 folders |
 
-> Snapshot taken 2026-08-29. Re-run `python scripts/vault_regenerate_mocs.py` to refresh.
+> Snapshot taken 2026-09-11. Re-run `python scripts/vault_regenerate_mocs.py` to refresh.
 
 ---
 
@@ -48,16 +48,16 @@ generator.
 
 | Folder | Notes |
 |---|---|
-| `00 - Dashboard & MOCs` | 4 — navigation only |
+| `00 - Dashboard & MOCs` | 5 — navigation only |
 | `01 - Dev Logs & History` | 6 — dated build history |
-| `02 - Bugs & Issues` | 6 active · 111 auto-archived |
-| `03 - Pipeline & Visual DNA` | 58 references · 4 knowledge |
-| `04 - Campaigns & Products` | 115 pins · 5 products · 2 campaigns |
+| `02 - Bugs & Issues` | 6 active · 117 auto-archived |
+| `03 - Pipeline & Visual DNA` | 62 references · 4 knowledge |
+| `04 - Campaigns & Products` | 94 pins · 26 products · 2 campaigns |
 | `05 - Architecture & Specs` | 5 — specs and PRDs |
 | `06 - Ideas & Future Backlog` | 3 |
 | `07 - Templates` | 6 |
-| `08 - Live Generation Nodes` | 59 jobs · 3 critiques |
-| `09 - Archive` | 2 — deprecated and junk |
+| `08 - Live Generation Nodes` | 23 jobs · 3 critiques |
+| `09 - Archive` | 3 — deprecated and junk |
 
 ---
 

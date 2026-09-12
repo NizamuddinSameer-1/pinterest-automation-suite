@@ -69,3 +69,5 @@ scratch/*.png
 scratch/*.jpg
 scratch/_verify/
 scratch/baseline/
+scratch/visual/
+scratch/mobile_audit/

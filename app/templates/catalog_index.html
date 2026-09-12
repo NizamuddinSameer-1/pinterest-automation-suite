@@ -2,7 +2,10 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#FFFFFF" />
+  <meta name="format-detection" content="telephone=no" />
+  <meta name="color-scheme" content="light" />
   <title>{{ catalog_title | default("SmartPickr | Curated Fashion & Lifestyle Lookbooks") }}</title>
   <meta name="description" content="Explore our hand-picked collection of trending fashion, home, and lifestyle lookbooks with honest hands-on reviews.">
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -52,6 +55,16 @@
       outline-offset: 2px;
     }
 
+    html {
+      /* iOS Safari inflates body text in landscape unless told not to. */
+      -webkit-text-size-adjust: 100%;
+      text-size-adjust: 100%;
+      /* Guard against any stray wide child. `clip` rather than `hidden`, since
+         `hidden` would turn <html> into a scroll container and break the
+         sticky header. */
+      overflow-x: clip;
+    }
+
     body {
       background: var(--white);
       color: var(--black);
@@ -59,11 +72,21 @@
       font-size: 14.5px;
       line-height: 1.65;
       -webkit-font-smoothing: antialiased;
+      overflow-x: clip;
     }
 
     a { text-decoration: none; color: inherit; }
-    img { display: block; max-width: 100%; }
+    img { display: block; max-width: 100%; height: auto; }
     button { font-family: inherit; }
+
+    /* Long unbroken strings must never widen the page. */
+    .hero-main-title, .hero-main-excerpt, .blog-title, .blog-excerpt,
+    .card-title, .colophon-mission, .ftc-colophon-box p, .nl-desc {
+      overflow-wrap: break-word;
+    }
+
+    /* Keyboard focus ring, matching the editorial accent. */
+    :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
     /* ── TOP BULLETIN MASTHEAD STRIP ─────────────── */
     .top-masthead-strip {
@@ -122,7 +145,7 @@
 
     .nav-bar {
       display: grid;
-      grid-template-columns: 1fr auto 1fr;
+      grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
       align-items: center;
       max-width: 1300px;
       margin: 0 auto;
@@ -338,7 +361,7 @@
 
     .hero-editorial-grid {
       display: grid;
-      grid-template-columns: 1.15fr 0.85fr;
+      grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
       align-items: center;
       gap: 56px;
     }
@@ -638,7 +661,7 @@
 
     .blog-grid {
       display: grid;
-      grid-template-columns: repeat(3, 1fr);
+      grid-template-columns: repeat(3, minmax(0, 1fr));
       gap: 36px;
     }
 
@@ -734,7 +757,7 @@
 
     .about-inner {
       display: grid;
-      grid-template-columns: 1fr 1fr;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
       gap: 64px;
       align-items: center;
     }
@@ -790,7 +813,7 @@
 
     .shop-grid {
       display: grid;
-      grid-template-columns: repeat(3, 1fr);
+      grid-template-columns: repeat(3, minmax(0, 1fr));
       gap: 24px;
     }
 
@@ -842,7 +865,7 @@
 
     .follow-grid {
       display: grid;
-      grid-template-columns: repeat(5, 1fr);
+      grid-template-columns: repeat(5, minmax(0, 1fr));
       gap: 14px;
     }
 
@@ -878,7 +901,7 @@
       margin: 0 auto;
       padding: 0 48px;
       display: grid;
-      grid-template-columns: 1.1fr 0.9fr;
+      grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr);
       align-items: center;
       gap: 48px;
     }
@@ -963,7 +986,7 @@
       margin: 0 auto;
       padding: 64px 48px 48px;
       display: grid;
-      grid-template-columns: 1.4fr 0.9fr 0.9fr 1.3fr;
+      grid-template-columns: minmax(0, 1.4fr) minmax(0, 0.9fr) minmax(0, 0.9fr) minmax(0, 1.3fr);
       gap: 48px;
     }
 
@@ -1131,32 +1154,64 @@
       color: #FFFFFF;
     }
 
+    /* ── HORIZONTAL PILL RAIL ─────────────────────────────────────────────
+       The category rail is intentionally a horizontal scroller on narrow
+       screens rather than a wrapped block: wrapping five pills eats a lot of
+       vertical space above the fold. It just needs to feel deliberate —
+       momentum scrolling, a hidden scrollbar, snap points, and enough inline
+       padding that the first and last pill are not clipped at the edges. */
+    .category-ribbon-wrap {
+      -webkit-overflow-scrolling: touch;
+      scrollbar-width: none;
+      scroll-snap-type: x proximity;
+    }
+    .category-ribbon-wrap::-webkit-scrollbar { display: none; }
+    .ribbon-pill { scroll-snap-align: start; }
+
+    /* ── TOUCH TARGETS ────────────────────────────────────────────────────
+       On any device without a precise pointer, controls get a 44px minimum
+       (Apple HIG / WCAG 2.5.5). The previous 28px social icons and 27px
+       hamburger were effectively unhittable with a thumb. */
+    @media (hover: none) {
+      .ham { min-width: 44px; min-height: 44px; align-items: center; justify-content: center; }
+      .social-link,
+      .colophon-social-row a { width: 44px; height: 44px; }
+      .ribbon-pill { min-height: 40px; display: inline-flex; align-items: center; }
+      .colophon-links a { display: inline-block; padding: 9px 0; }
+      .btn-back-top { min-height: 44px; }
+      .nav-links a { padding: 12px 0; }
+      .card-title-link, .blog-card { -webkit-tap-highlight-color: transparent; }
+    }
+
     /* ── RESPONSIVE COMPOSITION ─────────────────── */
     @media (max-width: 1100px) {
       .footer-colophon-grid {
-        grid-template-columns: 1fr 1fr;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
         gap: 40px;
       }
       .footer-newsletter-wrap {
-        grid-template-columns: 1fr;
+        grid-template-columns: minmax(0, 1fr);
         gap: 28px;
       }
     }
 
     @media (max-width: 900px) {
       .hero-editorial-grid {
-        grid-template-columns: 1fr;
+        grid-template-columns: minmax(0, 1fr);
         gap: 40px;
       }
       .blog-grid {
-        grid-template-columns: repeat(2, 1fr);
+        grid-template-columns: repeat(2, minmax(0, 1fr));
       }
       .about-inner {
-        grid-template-columns: 1fr;
+        grid-template-columns: minmax(0, 1fr);
         gap: 36px;
       }
       .shop-grid {
-        grid-template-columns: repeat(2, 1fr);
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+      .follow-grid {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
       }
     }
 
@@ -1166,14 +1221,20 @@
       .ham { display: flex; }
 
       .nav-bar {
-        grid-template-columns: auto 1fr auto;
-        padding: 0 20px;
-        height: 68px;
+        grid-template-columns: auto minmax(0, 1fr) auto;
+        padding: 0 16px;
+        height: 64px;
       }
 
-      .site-branding { text-align: left; align-items: flex-start; }
-      .site-logo { font-size: 24px; letter-spacing: 4px; }
+      .site-branding { text-align: left; align-items: flex-start; min-width: 0; }
+      .site-logo { font-size: 22px; letter-spacing: 3px; }
       .site-sub-logo { display: none; }
+
+      /* The desktop search field is redundant here — the drawer below the
+         header already carries one — and it is what pushed the nav 130px
+         past the viewport at 320px. */
+      .nav-search-box { display: none; }
+      .nav-actions { gap: 8px; }
 
       .hero-container,
       .category-ribbon-wrap,
@@ -1181,28 +1242,26 @@
       .footer-newsletter-wrap,
       .footer-colophon-grid,
       .baseline-wrap {
-        padding: 0 20px;
+        padding: 0 16px;
       }
 
-      .hero-showcase {
-        padding: 48px 0 56px;
-      }
+      .hero-showcase { padding: 40px 0 48px; }
 
       .blog-grid {
-        grid-template-columns: 1fr;
+        grid-template-columns: minmax(0, 1fr);
         gap: 32px;
       }
 
       .shop-grid {
-        grid-template-columns: 1fr;
+        grid-template-columns: minmax(0, 1fr);
       }
 
       .follow-grid {
-        grid-template-columns: repeat(3, 1fr);
+        grid-template-columns: repeat(3, minmax(0, 1fr));
       }
 
       .footer-colophon-grid {
-        grid-template-columns: 1fr;
+        grid-template-columns: minmax(0, 1fr);
         gap: 32px;
       }
 
@@ -1211,6 +1270,67 @@
         align-items: center;
         text-align: center;
         gap: 12px;
+      }
+
+      /* Any input under 16px makes iOS Safari zoom the whole page on focus. */
+      .mobile-search-row input,
+      .nl-email-input { font-size: 16px; }
+
+      .mobile-menu a { padding: 15px 20px; min-height: 44px; display: flex; align-items: center; }
+      .mobile-search-row { padding: 14px 20px; }
+    }
+
+    @media (max-width: 600px) {
+      .hero-main-title { font-size: clamp(28px, 8.4vw, 38px); }
+      .hero-showcase { padding: 32px 0 40px; }
+      .hero-trust-row { flex-direction: column; align-items: flex-start; gap: 8px; }
+
+      .follow-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .footer-newsletter-row { padding: 40px 0; }
+      .nl-editorial-copy h3.nl-title { font-size: clamp(24px, 7vw, 32px); }
+
+      /* Stack the newsletter form: a side-by-side input and button leaves the
+         email field too narrow to read what you typed. */
+      .nl-input-group { flex-direction: column; border-radius: 8px; }
+      .nl-email-input { padding: 14px 16px; }
+      .nl-submit-btn { justify-content: center; width: 100%; min-height: 48px; padding: 14px 20px; }
+
+      .card-title { font-size: 19px; }
+      .ribbon-label { display: none; }
+    }
+
+    @media (max-width: 480px) {
+      .nav-bar { padding: 0 12px; height: 60px; }
+      .site-logo { font-size: 19px; letter-spacing: 2px; }
+
+      .hero-container,
+      .category-ribbon-wrap,
+      .section-wrap,
+      .footer-newsletter-wrap,
+      .footer-colophon-grid,
+      .baseline-wrap { padding: 0 14px; }
+
+      .ribbon-pills { gap: 8px; }
+      .ribbon-pill { padding: 8px 13px; font-size: 12px; }
+
+      .footer-colophon-grid { gap: 28px; }
+      .ftc-colophon-box { padding: 14px; }
+      .btn-back-top { padding: 12px 0; }
+    }
+
+    @media (max-width: 380px) {
+      .site-logo { font-size: 17px; letter-spacing: 1.5px; }
+      .social-link { width: 38px; height: 38px; }
+      .hero-main-title { font-size: clamp(25px, 8vw, 30px); }
+    }
+
+    /* Respect users who have asked for less motion. */
+    @media (prefers-reduced-motion: reduce) {
+      html { scroll-behavior: auto; }
+      *, *::before, *::after {
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
       }
     }
   </style>

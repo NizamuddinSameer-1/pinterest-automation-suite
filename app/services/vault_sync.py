@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import shutil
 import traceback
 from datetime import datetime, timezone
 from pathlib import Path
@@ -90,6 +91,15 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
 
+def _created_or_now(file_path: Path) -> str:
+    """Preserve the original `created:` timestamp if the file already exists."""
+    if not file_path.exists():
+        return _now_iso()
+    text = file_path.read_text(encoding="utf-8", errors="replace")
+    m = re.search(r'^created:\s*"?([^"\n]+)"?', text, re.M)
+    return m.group(1).strip() if m else _now_iso()
+
+
 def _campaign_link(campaign_name: str | None = None, trend_label: str | None = None) -> str:
     """
     Wikilink to the campaign note for this job.
@@ -135,7 +145,7 @@ node_type: reference
 reference_id: "{reference_id}"
 trend: "{trend_label or 'N/A'}"
 category: "{category or 'N/A'}"
-created: "{_now_iso()}"
+created: "{_created_or_now(file_path)}"
 tags:
   - reference/live
   - {trend_tag}
@@ -230,7 +240,7 @@ category: "{category or 'general'}"
 merchant: "{merchant or 'N/A'}"
 price: {price or 0.00}
 affiliate_link: "{affiliate_url or ''}"
-created: "{_now_iso()}"
+created: "{_created_or_now(file_path)}"
 tags:
   - product/active
   - {cat_tag}
@@ -421,7 +431,7 @@ decision: "{decision}"
 authenticity: "{authenticity}"
 product_fidelity: "{fidelity}"
 originality: "{originality}"
-created: "{_now_iso()}"
+created: "{_created_or_now(file_path)}"
 tags:
   - critique/live
   - {decision_tag}
@@ -509,9 +519,8 @@ title: "{title}"
 status: "{status}"
 live_url: "{live_url or ''}"
 scheduled_time: "{scheduled_time or ''}"
-created: "{_now_iso()}"
+created: "{_created_or_now(file_path)}"
 tags:
-  - pin/live
   - {status_tag}
   - affiliate
 ---
@@ -592,7 +601,7 @@ title: "{title}"
 severity: "{severity.lower()}"
 status: "open"
 subsystem: "{subsystem.lower()}"
-created: "{_now_iso()}"
+created: "{_created_or_now(file_path)}"
 tags:
   - bug/open
   - severity/{severity.lower()}
@@ -661,7 +670,7 @@ def sync_commerce_node(job_id: str, commerce_dna: dict) -> Path:
     content = f"""---
 node_type: commerce_dna
 job_id: "{job_id}"
-created: "{_now_iso()}"
+created: "{_created_or_now(file_path)}"
 tags:
   - commerce/dna
 ---
@@ -693,3 +702,66 @@ tags:
     # We do not duplicate by default; existence of preferred satisfies spec's "or".
     logger.info("Obsidian Vault synced Commerce DNA Node: %s", file_path)
     return file_path
+
+
+# ─────────────────────────────────────────────────
+# 8. Pruning — archive notes whose DB row is gone
+# ─────────────────────────────────────────────────
+def prune_stale_notes(
+    valid_pin_ids: set[str],
+    valid_job_ids: set[str],
+    valid_ref_ids: set[str],
+    valid_prod_names: set[str],
+) -> dict[str, int]:
+    """
+    Move vault notes whose corresponding database entity no longer exists
+    into a dated archive folder under `09 - Archive/`.
+
+    Called at the end of a full sync so the vault stays a faithful mirror
+    of the live database rather than an ever-growing append-only log.
+    """
+    archive_root = FOLDER_ARCHIVE / f"Stale Sync {_now_iso()[:10]}"
+    archive_pins = archive_root / "Pins"
+    archive_jobs = archive_root / "Jobs"
+    archive_refs = archive_root / "References"
+    archive_products = archive_root / "Products"
+    for d in [archive_root, archive_pins, archive_jobs, archive_refs, archive_products]:
+        d.mkdir(parents=True, exist_ok=True)
+
+    stats: dict[str, int] = {"pins": 0, "jobs": 0, "refs": 0, "products": 0}
+
+    # Pins
+    for p in FOLDER_PINS.glob("*.md"):
+        raw = p.read_text(encoding="utf-8", errors="replace")
+        m = re.search(r'^pin_id:\s*"?([^"\n]+)"?', raw, re.M)
+        if m and m.group(1).strip() not in valid_pin_ids:
+            shutil.move(str(p), str(archive_pins / p.name))
+            stats["pins"] += 1
+
+    # Jobs
+    for p in FOLDER_JOBS.glob("*.md"):
+        raw = p.read_text(encoding="utf-8", errors="replace")
+        m = re.search(r'^job_id:\s*"?([^"\n]+)"?', raw, re.M)
+        if m and m.group(1).strip() not in valid_job_ids:
+            shutil.move(str(p), str(archive_jobs / p.name))
+            stats["jobs"] += 1
+
+    # References
+    for p in FOLDER_DNA_REFS.glob("*.md"):
+        raw = p.read_text(encoding="utf-8", errors="replace")
+        m = re.search(r'^reference_id:\s*"?([^"\n]+)"?', raw, re.M)
+        if m and m.group(1).strip() not in valid_ref_ids:
+            shutil.move(str(p), str(archive_refs / p.name))
+            stats["refs"] += 1
+
+    # Products
+    for p in FOLDER_PRODUCTS.glob("Product - *.md"):
+        name = p.stem[len("Product - "):]
+        if name not in valid_prod_names:
+            shutil.move(str(p), str(archive_products / p.name))
+            stats["products"] += 1
+
+    total = sum(stats.values())
+    if total:
+        logger.info("Pruned %d stale notes into %s", total, archive_root)
+    return stats

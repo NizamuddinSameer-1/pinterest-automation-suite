@@ -26,13 +26,19 @@ from app.models.models import (
 )
 from app.services.vault_sync import (
     sync_reference_node, sync_product_node, sync_job_node,
-    sync_critique_node, sync_pin_node, _ensure_vault_dirs, VAULT_PATH
+    sync_critique_node, sync_pin_node, _ensure_vault_dirs, VAULT_PATH,
+    prune_stale_notes,
 )
 
 
 async def sync_all():
     print("🚀 Starting full Obsidian Vault synchronization...")
     _ensure_vault_dirs()
+
+    valid_pin_ids: set[str] = set()
+    valid_job_ids: set[str] = set()
+    valid_ref_ids: set[str] = set()
+    valid_prod_names: set[str] = set()
 
     async with async_session() as db:
         # 1. Sync Campaigns
@@ -88,6 +94,7 @@ tags:
                 analysis=None,
                 visual_dna=dna_data,
             )
+            valid_ref_ids.add(ref.id)
             print(f"  ✅ Synced Reference: {ref.id} ({ref.trend_label})")
 
         # 3. Sync Products
@@ -106,6 +113,7 @@ tags:
                 affiliate_url=prod.affiliate_url,
                 product_truth=truth,
             )
+            valid_prod_names.add(prod.name)
             print(f"  ✅ Synced Product: {prod.name}")
 
         # 4. Sync Jobs & Outputs
@@ -130,6 +138,7 @@ tags:
                 is_rework=pv.is_rework if pv else False,
                 rework_instruction=pv.rework_instruction if pv else None,
             )
+            valid_job_ids.add(job.id)
 
             # Outputs & Critiques
             outs_res = await db.execute(select(JobOutput).where(JobOutput.job_id == job.id))
@@ -164,6 +173,7 @@ tags:
                 status=pin.status,
                 product_name=prod_name,
             )
+            valid_pin_ids.add(pin.id)
             print(f"  ✅ Synced Pin Draft: {pin.title} ({pin.id[:8]})")
 
         # 6. Update Main Dashboard & MOCs
@@ -225,6 +235,13 @@ Welcome to the **Pinterest Realism Engine (PRE)** Obsidian Knowledge Graph. This
         print("  ✅ Updated 🏠 Main Dashboard.md")
 
     print("\n🎉 Obsidian Vault synchronization complete! All nodes, MOCs, and metrics are up to date.")
+
+    # 7. Prune stale notes that no longer have a DB row
+    pruned = prune_stale_notes(valid_pin_ids, valid_job_ids, valid_ref_ids, valid_prod_names)
+    if any(pruned.values()):
+        print(f"🧹 Pruned {sum(pruned.values())} stale notes: {pruned}")
+    else:
+        print("🧹 No stale notes to prune.")
 
 if __name__ == "__main__":
     asyncio.run(sync_all())

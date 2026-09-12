@@ -150,14 +150,32 @@ def _extract_meta_from_html(html_file: Path) -> dict[str, Any] | None:
     """Parse title, description, and OG image from a generated lookbook HTML file."""
     try:
         content = html_file.read_text(encoding="utf-8", errors="ignore")
-        
-        title_match = re.search(r"<title>(.*?)</title>", content, re.IGNORECASE)
-        title = html.unescape(title_match.group(1)).strip() if title_match else html_file.stem
-        
-        desc_match = re.search(r'<meta\s+name=["\']description["\']\s+content=["\'](.*?)["\']', content, re.IGNORECASE)
+
+        # Imported locally to avoid a module-level cycle (article_generator
+        # imports is_public_lookbook_slug from this module).
+        from app.services.article_generator import _clean_scraped_text
+
+        title_match = re.search(r"<title>(.*?)</title>", content, re.IGNORECASE | re.DOTALL)
+        # `_clean_scraped_text` unescapes to a fixed point rather than once.
+        # A single `html.unescape` is correct for a page that has been rendered
+        # once, but these files get re-rendered on every regeneration, and each
+        # pass can add another layer of escaping. Unescaping only once would let
+        # a multi-generation page surface as "Style &amp;amp;amp; Wear Tests"
+        # in the public catalog.
+        title = (
+            _clean_scraped_text(title_match.group(1), max_len=140)
+            if title_match
+            else html_file.stem
+        )
+
+        desc_match = re.search(r'<meta\s+name=["\']description["\']\s+content=["\'](.*?)["\']', content, re.IGNORECASE | re.DOTALL)
         if not desc_match:
-            desc_match = re.search(r'<meta\s+property=["\']og:description["\']\s+content=["\'](.*?)["\']', content, re.IGNORECASE)
-        desc = html.unescape(desc_match.group(1)).strip() if desc_match else "Curated lookbook & authentic product review."
+            desc_match = re.search(r'<meta\s+property=["\']og:description["\']\s+content=["\'](.*?)["\']', content, re.IGNORECASE | re.DOTALL)
+        desc = (
+            _clean_scraped_text(desc_match.group(1), max_len=300)
+            if desc_match
+            else "Curated lookbook & authentic product review."
+        )
 
         # Resolve the bridge domain for building absolute image URLs
         bridge_domain = getattr(settings, "bridge_domain", None) or os.environ.get("BRIDGE_DOMAIN", "")

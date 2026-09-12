@@ -2,7 +2,15 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  {#
+    viewport-fit=cover is what makes env(safe-area-inset-*) resolve to real
+    values on notched iPhones. Without it the sticky bottom CTA sits under the
+    home indicator and is partially untappable.
+  #}
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#FFFFFF" />
+  <meta name="format-detection" content="telephone=no" />
+  <meta name="color-scheme" content="light" />
   {#
     Test/dev lookbooks must never be indexed. Setting this here (rather than
     patching the generated files afterwards) is what makes it stick: the running
@@ -202,7 +210,7 @@
         <!-- Above-The-Fold Hero Image -->
         {% if hero_look %}
         <div class="hero-frame">
-          <img src="{{ hero_look.image_url or hero_look.data_uri }}" alt="{{ product_name }} - {{ hero_look.angle_badge }}" loading="eager" width="640" height="960" />
+          <img src="{{ hero_look.image_url or hero_look.data_uri }}" alt="{{ product_name }} - {{ hero_look.angle_badge }}" loading="eager" fetchpriority="high" decoding="async" width="640" height="960" />
           <span class="hero-tag">{{ hero_look.angle_badge }}</span>
         </div>
         {% endif %}
@@ -245,14 +253,14 @@
 
           <div class="price-row">
             <div>
-              <div style="font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.03em; color: var(--ink-muted); margin-bottom: 2px;">Verified Amazon Price</div>
+              <div class="price-label">Verified Amazon Price</div>
               <span class="price-amount">{{ price_display }}</span>
               <span class="prime-badge">Prime Delivery</span>
             </div>
             {% if brand %}
-            <div style="text-align: right;">
-              <div style="font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.03em; color: var(--ink-muted);">Brand</div>
-              <div style="font-family: var(--font-display); font-size: 18px; font-weight: 600; color: var(--ink);">{{ brand }}</div>
+            <div class="price-brand">
+              <div class="price-brand-label">Brand</div>
+              <div class="price-brand-name">{{ brand }}</div>
             </div>
             {% endif %}
           </div>
@@ -265,9 +273,9 @@
 
           <div class="trust-chips">
             <span>✓ Direct Amazon Fulfillment</span>
-            <span>•</span>
+            <span class="chip-sep">•</span>
             <span>✓ 30-Day Free Returns</span>
-            <span>•</span>
+            <span class="chip-sep">•</span>
             <span>✓ Verified Specifications</span>
           </div>
         </div>
@@ -359,7 +367,7 @@
 
             <!-- Look Lifestyle Photo -->
             <figure class="look-image-frame">
-              <img src="{{ look.image_url or look.data_uri }}" alt="{{ product_name }} - {{ look.look_title }}" loading="lazy" width="640" height="960" />
+              <img src="{{ look.image_url or look.data_uri }}" alt="{{ product_name }} - {{ look.look_title }}" loading="lazy" decoding="async" width="640" height="960" />
               <span class="look-angle-chip">{{ look.angle_badge }}</span>
             </figure>
 
@@ -514,16 +522,18 @@
       <div class="sidebar-sticky">
         
         <!-- Quick Buy Widget -->
-        <div class="sidebar-widget" style="padding: 24px;">
+        {# Hidden below 1024px by CSS: the sticky bottom bar carries the same CTA
+           there, so showing both would just be a duplicate tap target. #}
+        <div class="sidebar-widget sidebar-buy-widget">
           <h4>Curated In-Stock Deal</h4>
           {% if hero_look %}
           <div class="sidebar-prod-img">
-            <img src="{{ hero_look.image_url or hero_look.data_uri }}" alt="{{ product_name }}" style="width:100%; border-radius:6px;" />
+            <img src="{{ hero_look.image_url or hero_look.data_uri }}" alt="{{ product_name }}" loading="lazy" decoding="async" />
           </div>
           {% endif %}
-          <div style="font-weight:600; font-size:15px; margin-bottom:4px;">{{ product_name }}</div>
-          <div style="color:var(--ink-muted); font-size:12.5px; margin-bottom:12px;">{{ brand }}</div>
-          <div style="font-family:var(--font-display); font-size:24px; font-weight:700; margin-bottom:14px;">{{ price_display }}</div>
+          <div class="sidebar-prod-name">{{ product_name }}</div>
+          <div class="sidebar-prod-brand">{{ brand }}</div>
+          <div class="sidebar-prod-price">{{ price_display }}</div>
           <a href="{{ affiliate_url }}" target="_blank" rel="nofollow sponsored noopener" class="sidebar-btn">
             Check Current Amazon Price →
           </a>
@@ -531,12 +541,12 @@
 
         <!-- Sidebar Related Guides -->
         {% if related_lookbooks %}
-        <div class="sidebar-widget sidebar-alt" style="padding: 24px; background:#FAF9F6;">
-          <h4 style="font-size:15px; margin-bottom:12px;">Related Guides</h4>
+        <div class="sidebar-widget sidebar-alt">
+          <h4>Related Guides</h4>
           {% for rel in related_lookbooks %}
-          <div style="margin-bottom:12px; padding-bottom:10px; border-bottom:1px solid var(--border);">
-            <div style="font-size:11.5px; font-weight:700; text-transform:uppercase; color:var(--accent);">{{ rel.category }}</div>
-            <a href="{{ rel.local_url or rel.url }}" style="font-size:13px; font-weight:600; color:var(--ink); line-height:1.4; display:block;">
+          <div class="sidebar-related-item">
+            <div class="sidebar-related-cat">{{ rel.category }}</div>
+            <a href="{{ rel.local_url or rel.url }}" class="sidebar-related-link">
               {{ rel.title }}
             </a>
           </div>
@@ -545,9 +555,9 @@
         {% endif %}
 
         <!-- Editorial Guarantee Widget -->
-        <div class="sidebar-widget sidebar-alt" style="padding: 24px; background:#FAF9F6;">
-          <h4 style="font-size:15px; margin-bottom:8px;">Editorial Guarantee</h4>
-          <p style="font-size:13px; color:var(--ink-soft); line-height:1.55; margin:0;">
+        <div class="sidebar-widget sidebar-alt">
+          <h4>Editorial Guarantee</h4>
+          <p class="sidebar-guarantee">
             Every product featured on SmartPickr undergoes comprehensive editorial analysis and verified manufacturer specification review to ensure authentic recommendations.
           </p>
         </div>
